@@ -1,5 +1,5 @@
 /*  =========================================================
-        🐉  Team Leafy  Sea  Dragons'  word  puzzle  game
+        🐉  TEAM Leafy  Sea  Dragons'  word  puzzle  game
     =========================================================
 
         ✦ inspried by  -->  NYT's Wordle
@@ -68,7 +68,7 @@ const classicDefaults = { wordLength: 5, maxGuesses: 6, gameRounds: 1 };
 
 
 /*  =============================================================
-        MESSAGES  —  all dialogs live here (static + dynamic)
+        MESSAGES  -->  all dialogs live here (static + dynamic)
     =============================================================
         ✦ define all user-facing text/displays (no hardcoded values)
         ✦ plain strings for fixed phrases  ;  small methods for places that use the 'live' config/state
@@ -78,7 +78,7 @@ const classicDefaults = { wordLength: 5, maxGuesses: 6, gameRounds: 1 };
 const messages = {
     /* ---------------- fixed snippets ---------------- */
     welcome: "Welcome !  Would you like to play a word puzzle game ?",
-    startOver: "Good choice !  Welcome back friend  🤗",
+    startOver: "We would love for you to play again another time  🤗",
     endGame: "Are you sure?\n\n    I bet you had a change of heart...  😉 \n\n( CANCEL / ESC ends the game  👀)",
     endLast: "    💔\nSo sad to see you leave...  \n\nI guess you're not that fun after all.  \n\n...Game window closing... 😂",
     needMorePlayers: "Requires at least 2 players !",
@@ -310,7 +310,7 @@ const messages = {
 
 
 /*  ============================================================
-        DICTIONARY  —  demo + optional external
+        DICTIONARY  -->  demo + optional external
     ============================================================
         ✦ tiny, in-line sample for demo / debugging  ; auto-switch to full list (API sim) when present (used by portfolio build)
         ✦ checks for presentation mode and external dict first before switching  ( avoid crashes )
@@ -337,7 +337,7 @@ const activeDictionary = Array.isArray(window.dictionaryData) && window.dictiona
 
 
 /*  =============================================================================
-        HELPERS  —  safe word length clamp, word picker, custom config parser
+        HELPERS  --  VALID CONFIGS  -->  safe word length clamp, word picker, custom config parser
     ============================================================================= */
 
 
@@ -420,7 +420,7 @@ function customConfig(inputLine) {
 
 
 /*  ===========================================================================
-        VALIDATION  —  clean → check length → check dictionary (recursion)
+        HELPERS -- VALID INPUT  -->  clean → check length → check dictionary (recursion)
     ===========================================================================
         ✦ keep the player inside one friendly question until the input is valid or canceled
             • function calls itself again when a retry is needed  -->  keeps the same board context visible for guidance
@@ -445,3 +445,206 @@ function validateGuess(inputLine, boardTextForRetry) {
 
     return cleanedGuess;    // valid and clean  -->  ready for scoring
 }
+
+
+
+
+/* ==================================================================================================
+        HELPERS -- SCORING  -->  compare guess vs target (2 passes), tally emojis, compute totals
+   ================================================================================================== */
+
+
+/* two-pass scoring (greens first, then yellows, leftover's are white)  -->  keeps duplicate letters hints accurate
+   targetWordOverride allows multiplayer to score against their own, per-player secret (closure) */
+function scoreGuess(cleanedGuessWord, targetWordOverride) {
+    const currentTargetWord = targetWordOverride || gameState.targetWord.word;    // prefer override when present (multiplayer)
+
+    const targetArray = currentTargetWord.split("");    // target letters array  (easier to compare)
+    const guessArray = cleanedGuessWord.split("");    // guess letters array  (parallel comparison to letter at current index in target word)
+    const gradeArray = Array(guessArray.length).fill(config.emojis.incorrect);    // default all to incorrect (later fill in correct/almost specifically)
+
+    const remainingLetterCount = {};    // frequency map after greens are removed  -->  keys are the remaining letters and values are the count of how many of that letter remains
+
+    // pass 1  -->  set greens and collect remaining counts
+    for (let i = 0; i < guessArray.length; i++) {
+        if (guessArray[i] === targetArray[i]) {    // exact match at this index  (placement is right and letter is right)
+            gradeArray[i] = config.emojis.correct;    // issue green mark for the correct spot
+        } else {
+            const letterAtTarget = targetArray[i];    // letter to count for yellows later (only non-green positions are remembered in frequency map)
+            remainingLetterCount[letterAtTarget] = (remainingLetterCount[letterAtTarget] || 0) + 1;    // increment count for this letter  ;  initializes with 0 on first sight
+        }
+    }
+
+    // pass 2  -->  set yellows using remaining counts  (separate passes prevents over-crediting duplicate letters in the guess)
+    for (let i = 0; i < guessArray.length; i++) {
+        if (gradeArray[i] === config.emojis.correct) continue;    // skip already green slots
+        const letterAtGuess = guessArray[i];    // letter we are trying to place ( candidate for yellow )
+        if (remainingLetterCount[letterAtGuess] > 0) {    // if the guess letter exists elsewhere in target (not including already greens)  -->  score with yellow
+            gradeArray[i] = config.emojis.almost;    // yellow mark for correct letter wrong spot
+            remainingLetterCount[letterAtGuess]--;    // decrease remaining count by 1 (prevent extra yellows)
+        } else {
+            gradeArray[i] = config.emojis.incorrect;    // white mark  -->  letter not present (or already accounted for all of letter)
+        }
+    }
+
+    return [cleanedGuessWord, gradeArray];    // format expected by displayGuess and explain windows
+}
+
+
+/* tallies emoji counts and returns points for the single guess. */
+function emojiGuessPoints(emojiArray) {
+    const counts = { correct: 0, almost: 0, incorrect: 0 };    // running tallies
+    for (let i = 0; i < emojiArray.length; i++) {
+        const grade = emojiArray[i];    // current emoji
+        if (grade === config.emojis.correct) counts.correct++;    // count the greens -->  +2 each by default
+        else if (grade === config.emojis.almost) counts.almost++;    // count yellows  -->  +1 each by default
+        else counts.incorrect++;    // count whites  -->  -1 each by default
+    }
+    const points = counts.correct * config.pointsValue.correct    // apply multipliers  (uses current config)
+                + counts.almost  * config.pointsValue.almost
+                + counts.incorrect * config.pointsValue.incorrect;
+    return { points, counts };    // both the number value and the visual breakdown (for messages.roundExplain)
+}
+
+
+/* 
+    compute totals for the current gameState (solo or per-player in multi)
+    includeBonus  -->  when true, adds remaining * wordLength * correctValue to player's score
+*/
+function computeUserScore(includeBonus) {
+    const perGuessPoints = gameState.attempts.map(([word, emojiRow]) => {    // extract per-guess points
+        return emojiRow.reduce((sum, grade) => {    // sum emojis to a row score
+            let emojiValue = 0;    // default
+            if (grade === config.emojis.correct) emojiValue = config.pointsValue.correct;    // green value
+            else if (grade === config.emojis.almost) emojiValue = config.pointsValue.almost;    // yellow value
+            else emojiValue = config.pointsValue.incorrect;    // white value
+            return sum + emojiValue;    // accumulate row total
+        }, 0);    // accumulate sum from 0
+    });
+
+    const guessesPoints = perGuessPoints.reduce((a, b) => a + b, 0);    // sum all rows (overall base score)
+
+    const unusedGuessPoints = includeBonus
+        ? gameState.remaining * config.wordLength * config.pointsValue.correct    // bonus locks when game round ends
+        : 0;    // mid-game display hides bonus  ( prevents confusion )
+
+    const totalPoints = guessesPoints + unusedGuessPoints;    // overall total ( base + bonus )
+    return { totalPoints, unusedGuessPoints, perGuessPoints, guessesPoints };    // full breakdown  -->  used by summaries
+}
+
+/*
+    build standings and leaders from a list of player objects (multiplayer)
+    includeBonusFlag -->  true | false | "finishedOnly" (show bonus only if that player finished). */
+function computeGameStats(playersArray, includeBonusFlag = true) {
+    const mixedBonus = (includeBonusFlag === "finishedOnly");    // special mid-cycle mode  -->  avoids showing future bonus
+
+    const totals = playersArray.map(player => {    // compute one stat sheet per player
+        const savedAttempts = gameState.attempts;    // save global board
+        const savedRemaining = gameState.remaining;    // save remaining attempts (for bonus/penalty calcs)
+
+        gameState.attempts = player.attempts;    // tell scorer to use this player’s performance data (reuse computeUserScore)
+        gameState.remaining = player.remaining;
+
+        const scoreNoBonus = computeUserScore(false).totalPoints;    // base score (no bonus)
+        const scoreWithBonus = computeUserScore(true).totalPoints;    // full score (includes locked in bonus)
+
+        gameState.attempts = savedAttempts;    // restore global board  --> avoid any mutations / changes
+        gameState.remaining = savedRemaining;    // restore remaining
+
+        const bonusPotential = Math.max(0, scoreWithBonus - scoreNoBonus);    // non-negative bonus amount
+
+        let total = mixedBonus
+            ? (player.status !== "playing" ? scoreWithBonus : scoreNoBonus)    // only finished players show a bonus
+            : (includeBonusFlag ? scoreWithBonus : scoreNoBonus);
+
+        if (mixedBonus || includeBonusFlag === true) {    // only subtract penalties where bonus displays are expected
+            if (player.status === "quit") {
+                const penalty = (player.remainingAtQuit || 0) * config.wordLength * config.pointsValue.correct;    // mirror bonus size
+                total -= penalty;    // remove what would have been the bonus for 'finishing' early  ;  quitting does not help totals
+            }
+        }
+
+        const attemptRow = Array.isArray(player.roundPoints) ? player.roundPoints : [];    // per-guess points list
+        const count = Math.max(1, attemptRow.length);    // guard against divide-by-zero
+        const average = attemptRow.reduce((a, b) => a + b, 0) / count;    // average per guess scroe
+
+        let best = -Infinity, bestAt = 0;    // track best single guess   ;  starts with first real value
+        for (let i = 0; i < attemptRow.length; i++) { if (attemptRow[i] > best) { best = attemptRow[i]; bestAt = i + 1; } }
+        if (best === -Infinity) { best = 0; bestAt = 0; }    // if none, show zeros
+
+        let worst = Infinity, worstAt = 0;    // track weakest single guess
+        for (let i = 0; i < attemptRow.length; i++) { if (attemptRow[i] < worst) { worst = attemptRow[i]; worstAt = i + 1; } }
+        if (worst === Infinity) { worst = 0; worstAt = 0; }
+
+        return mixedBonus
+            ? { name: player.name, total, average, best, bestAt, worst, worstAt, bonusSoFar: (player.status !== "playing") ? bonusPotential : 0 }
+            : { name: player.name, total, average, best, bestAt, worst, worstAt };
+    });
+
+    const standings = totals
+        .map(row => mixedBonus
+            ? ({ name: row.name, totalPoints: row.total, bonusSoFar: row.bonusSoFar })
+            : ({ name: row.name, totalPoints: row.total })
+        )
+        .sort((a, b) => b.totalPoints - a.totalPoints);    // descending by total points (highest value is first)
+
+    const leaderTotal = totals.slice().sort((a, b) => b.total - a.total)[0];    // copy before sort to avoid mutations
+    const leaderAvg   = totals.slice().sort((a, b) => b.average - a.average)[0];
+    const leaderBest  = totals.slice().sort((a, b) => b.best - a.best)[0];
+    const leaderWorst = totals.slice().sort((a, b) => a.worst - b.worst)[0];
+
+    return { standings, leaderTotal, leaderAvg, leaderBest, leaderWorst };    // shape expected by messages.statSummary
+}
+
+
+
+
+/*  ===================================================================================================
+        HELPERS  -- BOARD PRINTER  -->  turns the game board into a string for inclusion in dialogs
+    ===================================================================================================
+*/
+function displayGuess(attemptsOverride) {
+    const attemptsToShow = attemptsOverride || gameState.attempts;    // 1 printer for both game modes  -->  allow for a custom game board (in multiplayer)
+    const attemptText = attemptsToShow
+        .map((pairRow, indexNum) => {    // build two-line block per attempt  ;  formatt for easy comparison of letter accuracy
+            const guessWord = pairRow[0];    // guessed word (string)  ;  top line  -->  letters
+            const emojiRow = pairRow[1];    // marks (array)  ;  bottom line  -->  grade per letter
+            const spacedLetters = guessWord.toUpperCase().split("")    // caps to highlight the guess then split into letters array
+                .join("     ");    // pad letters to align with grade marks
+            const feedbackRow = emojiRow.join("   ");    // space out grade marks to simulate a column-like look
+            return `Attempt  ${indexNum + 1}  of  ${config.maxGuesses} :    ${spacedLetters}\n                                 ${feedbackRow}`;    // add the 2 lines together
+        })
+        .join("\n");    // stack all blocks (previous guesses + grades) with newlines to make 1 string to show
+
+    return attemptText + "\n" + messages.legendLine();    // append legend 1 time to the very bottom so a quick key always visible
+}
+
+
+
+
+/*  =========================================================
+        GAME ENTRY / EXIT  -->  intro + outro
+    ========================================================= */
+
+function intro() {
+    const responseYes = confirm(messages.welcome);    // funnel to menus or exit game  -->  OK to continue  ;  cancel/ESC to leave
+    if (responseYes) {
+        return menuRouter("main");    // go to the main menu  -->  choose mode → rules → play
+    } else {
+        alert(messages.startOver);    // friendly close  ;  lol, wait for it
+        return outro();    // lets player reconsider exit
+    }
+}
+
+function outro() {
+    const didChangeMind = confirm(messages.endGame);    // gives a second chance   -->  accidental cancel safety net
+    if (didChangeMind) {
+        return intro();    // jump back to entry point ( fresh start )
+    } else {
+        alert(messages.endLast);    // final goodbye  -->  session ends
+    }
+}
+
+
+
+
