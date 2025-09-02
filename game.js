@@ -210,13 +210,13 @@ const messages = {
         return "ALL GAMES  -->  Cumulative  Leaderboard:\n\n";
     },
 
-    /* ---------------- per-turn “explain” (unchanged idea; still dynamic) ---------------- */
+    /* ---------------- dynamic per-turn summary / stat explaination ---------------- */
     roundExplain(
         displayName, roundNow, roundsTotalAll, guessWordNow, emojiRowNow, pointsNow,
         correctCount, almostCount, wrongCount, runningTotalNoBonus, gameIndexOrNull,
         bonusThisTurn, bonusLockedSoFar, runningAllOrNull, seriesBonusSoFar
     ) {
-        const gamePrefix = (typeof gameIndexOrNull === "number") ? `Game  ${gameIndexOrNull}  -->  ` : "";    // adds game label in a series
+        const gamePrefix = (typeof gameIndexOrNull === "number") ? `Game  ${gameIndexOrNull}  -->  ` : "";    // adds game label for a series
         return (
             `${gamePrefix}${displayName}  -->  Attempt  ${roundNow}  of  ${roundsTotalAll}\n\n` +
             `Guess:  ${guessWordNow.toUpperCase()}   -->   ${emojiRowNow.join(" ")}\n` +
@@ -235,7 +235,7 @@ const messages = {
         );
     },
 
-    /* ---------------- one-off notices for skipping turns ---------------- */
+    /* ---------------- notices for skipping turns (only shows the first skipped turn) ---------------- */
     solvedSkipNotice(name, totalWithBonus, lockedBonus, hadReplaysYes, runningWithCurrentGame, runningBonusWithCurrent) {
         const allLine = hadReplaysYes
             ? `\n\nAll games:      ${runningWithCurrentGame}  points` + (runningBonusWithCurrent > 0 ? `   ( incl.  ${runningBonusWithCurrent}  bonus )` : "")
@@ -247,7 +247,7 @@ const messages = {
         return `${name}  quit this game  😢  -->  skipping remaining guesses...\n\nThis game:    ${totalNoBonus}  points\nQuit penalty:   - ${penalty}  points` + allLine;
     },
 
-    /* ---------------- session / series summary (same logic; still readable for class) ---------------- */
+    /* ---------------- session / series summary ---------------- */
     statSummary(objOrArr) {
         // multi / series or mid-game objects have standings
         if (objOrArr && objOrArr.standings) {    // detect multi summaries
@@ -336,3 +336,112 @@ const activeDictionary = Array.isArray(window.dictionaryData) && window.dictiona
 
 
 
+/*  =============================================================================
+        HELPERS  —  safe word length clamp, word picker, custom config parser
+    ============================================================================= */
+
+
+/* uses .reduce to go through the list and collect min / max / nearest in one pass
+   tie-breaker prefers the smaller length so difficulty does not spike unexpectedly */
+function safeWordLength(requestedLength, dictList) {
+    const acc = dictList.reduce((curr, entry) => {    // pass over elements once and summarize as we go
+        const lengthNow = entry.word.length;    // current word length
+        if (curr === null) {    // format 1st elem to be useful in the comparisons (baseline)
+            return {
+                min: lengthNow, max: lengthNow, nearest: lengthNow,    // set all baselines (equal at start)
+                diff: Math.abs(lengthNow - requestedLength),    // distance to requested length
+                hasRequested: (lengthNow === requestedLength),    // flag if word(s) of the exact requested length are found (sticky)
+            };
+        }
+        const minLen = Math.min(curr.min, lengthNow);    // keep a global min
+        const maxLen = Math.max(curr.max, lengthNow);    // keep a global max
+        const distance = Math.abs(lengthNow - requestedLength);    // absolute distance (useful for picking the nearest word length)
+        const isCloserChoice =
+            (distance < curr.diff) ||    // better candidate if closer to target length than previous closest
+            (distance === curr.diff && lengthNow < curr.nearest);    // if there's a distance tie, prefer the smaller length
+        return {
+            min: minLen, max: maxLen,
+            nearest: isCloserChoice ? lengthNow : curr.nearest,    // update nearest length value when a better one is found
+            diff: isCloserChoice ? distance : curr.diff,    // update diff accordingly
+            hasRequested: curr.hasRequested || (lengthNow === requestedLength),    // use OR so it stays true once seen (sticky)
+        };
+    }, null);    // start with null so the first elem is used to set the baseline
+
+    if (!acc) return requestedLength;    // don't break if the dictionary is empty (edge case  -->  nothing to clamp)
+    return acc.hasRequested ? requestedLength : acc.nearest;    // safe clamp  -->  exact if it exists ; otherwise nearest
+}
+
+
+/*  chooses a new target game word of desired length and avoids repeats when possible */
+function pickAWord(dictList, excludeList = gameState.history) {
+    const safeLen = safeWordLength(config.wordLength, dictList);    // clamp length safely  -->  protects filters below from breaking
+    config.wordLength = safeLen;    // add to config so other functions rely on a valid length
+
+
+    let candidateDict = dictList.filter(entry =>    // build pool of candidate enties 
+        entry.word.length === config.wordLength &&    // only keep words with the correct length (updated one)
+        !(excludeList && Array.isArray(excludeList) && excludeList.includes(entry.word))    // and words not in the game history already
+    );
+
+    if (candidateDict.length === 0) {    // if every word of this length was used, then allow repeats so the game can continue
+        candidateDict = dictList.filter(entry => entry.word.length === config.wordLength);    // drop 'history' filter and only keep the length filter
+    }
+
+    const indexNum = Math.floor(Math.random() * candidateDict.length);    // picks a random index inside [0, candidateDict.length)
+    return candidateDict[indexNum];    // selected { word, definition } obj returned to the caller
+}
+
+
+/* flexibly parses "len, guesses, rounds" prompt (comma / space separated custom config inputs) */
+function customConfig(inputLine) {
+    if (!inputLine) {    // if cancel or empty input  -->  keep current settings
+        return {
+            wordLength: config.wordLength,
+            maxGuesses: config.maxGuesses,
+            gameRounds: gameState.lastRounds || 1,
+        };
+    }
+
+    const numericParts = inputLine
+        .replace(/\D+/g, " ")    // only keep numbers  -->  commas/pipes/etc collapse into single spaces
+        .split(/\s+/)    // split on 1+ spaces and build an array from that
+        .filter(Boolean)    // drop empty elements  -->  cleans up accidental gaps
+        .map(numberText => parseInt(numberText, 10));    // turn text into base-10 numbers (keep a consistent numeric array and avoid type coersion/errors)
+
+    const [customLen, customMax, customRounds] = numericParts;    // only take first three numbers (extras are ignored)
+    const wordLength = Number.isFinite(customLen) ? customLen : config.wordLength;    // guard against NaN / infinite loop (fallback to current config)
+    const maxGuesses = Number.isFinite(customMax) ? customMax : config.maxGuesses;    // same idea here  ;  fallback to current config
+    const gameRounds = Number.isFinite(customRounds) ? customRounds : (gameState.lastRounds || 1);    // same idea here  ;  fallback to last game's count or classic 1 round
+
+    return { wordLength, maxGuesses, gameRounds };    // compact return for callers use
+}
+
+
+
+
+/*  ===========================================================================
+        VALIDATION  —  clean → check length → check dictionary (recursion)
+    ===========================================================================
+        ✦ keep the player inside one friendly question until the input is valid or canceled
+            • function calls itself again when a retry is needed  -->  keeps the same board context visible for guidance
+            • cancel/ESC returns null so the caller can confirm quitting on this game word
+*/
+function validateGuess(inputLine, boardTextForRetry) {
+    if (inputLine === null) return null;    // cancel/Esc  -->  pass to caller to confirm
+
+    const cleanedGuess = inputLine.toLowerCase().replace(/[^a-z0-9]/g, "");    // format to lowercase (same as dictionary) + strip to letters/numbers  ;  also used to normalize team names and words
+    const isRightLength = (cleanedGuess.length === config.wordLength);    // exact length check  -->  based on current config
+    const isInDictionary = activeDictionary.some(entry => entry.word === cleanedGuess);    // enforce membership in game dictionary  (may be a real word but it may not be in the game)  ;  .some() stops early when found
+
+    if (!isRightLength) {    // player input is the wrong length  -->  shows exact target length for clarity
+        const nextInput = prompt(messages.invalidGuess("length", { inputLen: cleanedGuess.length, neededLen: config.wordLength, boardText: boardTextForRetry }));    // clearly explains the explected size
+        return validateGuess(nextInput, boardTextForRetry);    // recursive retry  with the  same game board for context
+    }
+
+    if (!isInDictionary) {    // input is the correct length but an unknown word (not in game's dictionary)
+        const nextInput = prompt(messages.invalidGuess("unknown", { cleanWord: cleanedGuess, boardText: boardTextForRetry }));    // encourage another try
+        return validateGuess(nextInput, boardTextForRetry);    // recursive retry
+    }
+
+    return cleanedGuess;    // valid and clean  -->  ready for scoring
+}
