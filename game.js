@@ -784,3 +784,96 @@ function menuRouter(phaseName = "main") {
 
 
 
+/*  =========================================================
+        PLAY GAME  -->  SOLO  -- one game loop
+    =========================================================
+        ✦ GAME FLOW  -->
+            1)  reset per-game fields ; show rules
+            2)  pick target word ; loop prompts  →  validate  →  score  →  track
+            3)  end message + reveal + summary ; store solo session totals
+*/
+function playGame() {
+    // reset per-game fields
+    gameState.status = "playing";    // fresh state  -->  new round
+    gameState.attempts = [];    // clear board empty the array
+    gameState.remaining = config.maxGuesses;    // reset countdown to match current game rules
+
+    alert(messages.rulesInfo());    // dynamic rules display  -->  uses config values
+
+    // pick target (avoid repeats when possible)
+    const gameWordObj = pickAWord(activeDictionary);    // select {word, definition}  -->  verifies safe game word length
+    gameState.targetWord = gameWordObj;    // save secret word for scoring and reveal
+    if (!gameState.history.includes(gameWordObj.word)) gameState.history.push(gameWordObj.word);    // record globally to reduce repeats later
+
+    // main loop
+    while (gameState.status === "playing") {
+        const boardText = displayGuess();    // snapshot of current board  -->  helps with guessing
+        const guessLine = prompt(messages.promptGuess(gameState.playerNames[0] || null, boardText));    // solo player may have picked a display name
+        let cleanGuess = null;    // will hold validated guess
+
+        if (guessLine !== null) cleanGuess = validateGuess(guessLine, boardText);    // recursion keeps the same board for invalid inputs
+
+        if (guessLine === null || cleanGuess === null) {    // cancel ?  -->  confirm with user
+            const continueYes = confirm(messages.endGame);    // gives a second chance
+            if (continueYes) continue;    // no penalty  -->  skip the rest of this loop
+            gameState.status = "quit";    // else  -->  record quit  (affects scoring)
+            gameState.remainingAtQuit = gameState.remaining;    // size of penalty (mirrors bonus)
+            gameState.remaining = 0;    // keep math stable downstream (was having phantom points issue when using approach of chnaging to negative to calculate penalty)
+            break;    // leave loop
+        }
+
+        const [guessWordNow, emojiRowNow] = scoreGuess(cleanGuess);    // score for solo target
+        gameState.attempts.push([guessWordNow, emojiRowNow]);    // record entry
+        gameState.remaining--;    // remove a guess attempt
+
+        if (emojiRowNow.every(mark => mark === config.emojis.correct)) gameState.status = "won";    // player solved
+        else if (gameState.remaining === 0) gameState.status = "lost";    // player ran out of tries
+    }
+
+    // totals and penalty application
+    const baseTotals = computeUserScore(true);    // base includes bonus for any remaining guesses
+    const quitPenalty = gameState.status === "quit"
+        ? (gameState.remainingAtQuit || 0) * config.wordLength * config.pointsValue.correct    // same size as bonus but negative
+        : 0;
+
+    const finalRoundScore = {
+        ...baseTotals,    // keep breakdown fields  -->  explains in summary
+        totalPoints: baseTotals.totalPoints - quitPenalty,    // apply penalty after computing base
+        quitPenalty,    // store the amount for reference
+    };
+
+    gameState.sessionScores.push(finalRoundScore);    // record for solo session summary
+
+    const showSoloCumulative = gameState.sessionScores.length > 1;    // show only after 2+ games
+    const cumulativePoints = showSoloCumulative
+        ? gameState.sessionScores.reduce((sum, row) => sum + row.totalPoints, 0)    // sum all totals so far
+        : 0;
+    const cumulativeLine = showSoloCumulative ? `\n\nAll games (solo):   ${cumulativePoints}  points` : "";    // optional line
+
+    // reveal + end message
+    if (gameState.status === "won") {
+        alert(
+            messages.outcomeText("won", { guessesUsed: config.maxGuesses - gameState.remaining }) +    // “solved in X attempts”
+            "\n\n" + `${messages.showGameWord ? messages.showGameWord(gameWordObj) : `The game word was:   ${gameWordObj.word.toUpperCase()}\nDefinition:   ${gameWordObj.definition}`}` + 
+            "\n\n" + messages.statSummary(finalRoundScore) + cumulativeLine
+        );
+    } else if (gameState.status === "lost") {
+        alert(
+            messages.outcomeText("lost", {}) + "\n\n" +
+            `${messages.showGameWord ? messages.showGameWord(gameWordObj) : `The game word was:   ${gameWordObj.word.toUpperCase()}\nDefinition:   ${gameWordObj.definition}`}` +
+            "\n\n" + messages.statSummary(finalRoundScore) + cumulativeLine
+        );
+    } else {
+        alert(
+            messages.outcomeText("quit", {}) + "\n\n" +
+            `${messages.showGameWord ? messages.showGameWord(gameWordObj) : `The game word was:   ${gameWordObj.word.toUpperCase()}\nDefinition:   ${gameWordObj.definition}`}` +
+            "\n\n" + messages.statSummary(finalRoundScore) + cumulativeLine
+        );
+    }
+
+    // if menuRouter launched the game, control returns there ; otherwise do a basic replay prompt
+    if (typeof gameState.lastGameMode === "undefined") {
+        const playAgainYes = confirm(messages.endGame);    // basic replay confirm
+        if (playAgainYes) playGame(); else outro();
+    }
+}
