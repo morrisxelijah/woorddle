@@ -61,7 +61,7 @@ const gameState = {
 };
 
 /* --------------- CLASSIC GAME CONFIGS --------------- */
-//  kept sepeately for going back to defaults after custom games  ;  reused in prompts (messages / dialogs)
+// kept sepeately for going back to defaults after custom games  ;  reused in prompts (messages / dialogs)
 const classicDefaults = { wordLength: 5, maxGuesses: 6, gameRounds: 1 };
 
 
@@ -643,6 +643,142 @@ function outro() {
     } else {
         alert(messages.endLast);    // final goodbye  -->  session ends
     }
+}
+
+
+
+
+/*  ============================================================================================================
+        HELPERS  --  MENU ROUTER  -->  chooses mode & rules, loops gameplay, then sends to post-game actions
+    ============================================================================================================
+*/
+function menuRouter(phaseName = "main") {
+    if (phaseName === "main") {    // pre-game flow  -->  pick a mode, then rules for that mode
+        const modeInput = prompt(messages.menuText("mode"));    // ask for mode  -->  solo / multiplayer / quit
+        const modeClean = (modeInput || "").toLowerCase().trim();    // normalize user text  --> account for null/empty
+
+        if (modeInput === null) {    // Cancel on mode menu  -->  exit + optional session summary
+            const summary = messages.statSummary(gameState.sessionScores);    // solo session summary appears after 2+ games
+            if (summary) alert(summary);    // show when available
+            return outro();    // end or restart from outro
+        }
+
+        let chosenModeName = "solo";    // fallback/default when user inputs something unexpected
+        // uses boolean check to switch cases (first true wins like an if/elseif series)
+        switch (true) {    // allows for .includes() checks  -->  allows for faster demo/testing
+            case modeClean.includes("so"): { chosenModeName = "solo"; break; }    // solo
+            case modeClean.includes("mu"): { chosenModeName = "multi"; break; }    // multiplayer
+            case modeClean.includes("q"):  {    // quit
+                const summary = messages.statSummary(gameState.sessionScores);    // optional solo session summary
+                if (summary) alert(summary);
+                return outro();
+            }
+            default: { /* stays 'solo' via variable initialization */ }    // unrecognizable input ?  -->  turns into solo game
+        }
+
+        const rulesInput = prompt(messages.menuText("rules", chosenModeName));    // pick rules for that mode
+        const rulesClean = (rulesInput || "").toLowerCase().trim();    // normalize rules text
+
+        if (rulesInput === null) return menuRouter("main");    // back to mode selection
+
+        let chosenRuleName = "classic";    // fallback to default rules
+        switch (true) {
+            case rulesClean.includes("cu"): { chosenRuleName = "custom";  break; }    // custom
+            case rulesClean.includes("cl"): { chosenRuleName = "classic"; break; }    // classic
+            default: { /* keep 'classic' */ }
+        }
+
+        if (chosenModeName === "solo") {
+            // optional solo name stored the same way as multiplayer names
+            const soloNameInput = prompt(messages.promptGroupSetup("solo"));    // allow solo player to add an optional name
+            gameState.playerNames = soloNameInput ? [soloNameInput.trim()] : [];    // empty array means anonymous solo player
+
+            if (chosenRuleName === "classic") {
+                config.wordLength = classicDefaults.wordLength;    // apply baseline defaults  -->  classic configs
+                config.maxGuesses = classicDefaults.maxGuesses;
+                gameState.lastGameMode = "solo";
+                gameState.lastRounds = classicDefaults.gameRounds;
+                playGame();    // one classic solo game
+            } else {
+                const customLine = prompt(messages.promptEntryCustomConfig());    // prompts for 3 numbers to use for custom configs
+                if (customLine === null) return menuRouter("main");    // cancelled ?  --> send  back to the main menu
+                const parsed = customConfig(customLine);    // clamp numbers
+                config.wordLength = parsed.wordLength;    // apply all
+                config.maxGuesses = parsed.maxGuesses;
+                gameState.lastGameMode = "solo";
+                gameState.lastRounds = parsed.gameRounds;
+                for (let n = 1; n <= parsed.gameRounds; n++) playGame();    // series of solo games (count specified in custom config)
+            }
+        } else {
+            // multiplayer
+            gameState.lastGameMode = "multi";
+            if (chosenRuleName === "classic") {
+                config.wordLength = classicDefaults.wordLength;    // classic multi
+                config.maxGuesses = classicDefaults.maxGuesses;
+                gameState.lastRounds = classicDefaults.gameRounds;
+                playGameMulti({ priorWordLength: config.wordLength, priorMaxGuesses: config.maxGuesses, priorRounds: gameState.lastRounds });    // fast path  -->  skip prompt for custom configs
+            } else {
+                playGameMulti();    // custom path handled inside multi game flow
+            }
+        }
+
+        return menuRouter("post");    // post-game loop starts after any game path finishes
+    }
+
+    // post phase  -->  replay / custom / change mode / quit ; defaults to replay
+    const postInput = prompt(messages.menuText("post"));    // request next steps
+    const postClean = (postInput || "").toLowerCase().trim();    // normalized
+
+    if (postInput === null) {    // cancelled at post menu
+        const summary = messages.statSummary(gameState.sessionScores);    // solo session summary
+        if (summary) alert(summary);
+        return outro();
+    }
+
+    switch (true) {
+        case postClean.includes("re"): {    // replay same mode/configs
+            if (gameState.lastGameMode === "solo") {
+                for (let n = 1; n <= gameState.lastRounds; n++) playGame();    // repeat last solo series
+            } else {
+                if (gameState.lastMultiplayerSetup) playGameMulti(gameState.lastMultiplayerSetup);    // repeat last multi setup
+                else playGameMulti();    // no last game configs snapshot  -->  prompt for optional custom
+            }
+            break;
+        }
+        case postClean.includes("cu"): {    // change configs (same mode)
+            if (gameState.lastGameMode === "solo") {
+                const customLine = prompt(messages.promptEntryCustomConfig());    // new settings
+                if (customLine === null) return menuRouter("post");
+                const parsed = customConfig(customLine);
+                config.wordLength = parsed.wordLength;
+                config.maxGuesses = parsed.maxGuesses;
+                gameState.lastRounds = parsed.gameRounds;
+                for (let n = 1; n <= parsed.gameRounds; n++) playGame();
+            } else {
+                playGameMulti();    // multiplayer prompts internally
+            }
+            break;
+        }
+        case postClean.includes("mo"): {    // change mode
+            return menuRouter("main");
+        }
+        case postClean.includes("q"): {    // quit
+            const summary = messages.statSummary(gameState.sessionScores);    // game summary if any
+            if (summary) alert(summary);
+            return outro();
+        }
+        default: {    // default to replay
+            if (gameState.lastGameMode === "solo") {
+                for (let n = 1; n <= gameState.lastRounds; n++) playGame();
+            } else {
+                if (gameState.lastMultiplayerSetup) playGameMulti(gameState.lastMultiplayerSetup);
+                else playGameMulti();
+            }
+            break;
+        }
+    }
+
+    return menuRouter("post");    // stay in post loop for repeated play / change / quit  ;  accumulates game histories of the same game mode
 }
 
 
