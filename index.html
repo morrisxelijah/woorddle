@@ -28,7 +28,7 @@
     <header class="site-head" role="banner">
       <h1 class="title">Leafy Sea Dragons — Word Puzzle</h1>
       <p class="subtitle">
-        Solo or Multi player   •   Classic or Custom rules   •   Emoji scoring
+        •   Solo or Multi player <br />  •   Classic or Custom rules <br />  •   Emoji scoring
       </p>
     </header>
 
@@ -52,8 +52,10 @@
       </section>
     </main>
 
+     <p>  🐉  Reload the page to run the game again !  🐉</p> 
+
     <footer class="site-foot" role="contentinfo">
-      <p>©  🐉  Leafy Sea Dragons  🐉</p>
+      <p>©  <br />  🐉  Leafy Sea Dragons  🐉</p>
     </footer>
 
 
@@ -102,5 +104,222 @@
 
     <!-- game refactored for the embedded version -->
     <script src="./game.js" defer></script>
+  </body>
+</html>
+
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+    <!--  =================================================================
+            Leafy Sea Dragons — Word Puzzle  (standalone + embed-ready)
+         ==================================================================
+            ✦ theme strategy
+                • CSS variables drive all colors
+                • <html data-theme="light|dark"> switches palettes
+                • no OS auto-detect; manual toggle only (portfolio controls it)
+                • sync across pages/iframes using  localStorage("mx-theme")  +  parent <html data-theme> (when same-origin)
+            ✦ paint-early guard
+                • set the theme BEFORE the CSS renders to avoid flash
+                • inline boot executes synchronously in <head>
+
+    -->
+
+    <script>
+      /*  ---------------------------------------------------------
+              THEME  BOOT  —  run ASAP (pre-CSS) to stop color flash
+          ---------------------------------------------------------
+          ✦ shared storage key  -->  "mx-theme"
+          ✦ precedence
+                1) in an iframe and can read parent <html data-theme> ?  prefer that immediately
+                2) else try localStorage (shared origin)
+                3) else fallback to "light"
+      */
+      (function () {
+        var KEY = "mx-theme";
+        var html = document.documentElement;
+        function safeParentTheme() {
+          try {
+            if (window.parent && window.parent !== window) {
+              var d = window.parent.document;
+              return d && d.documentElement && d.documentElement.getAttribute("data-theme");
+            }
+          } catch (_) {}
+          return null;
+        }
+        var initial =
+          safeParentTheme() ||
+          (function () {
+            try {
+              return localStorage.getItem(KEY);
+            } catch (_) {
+              return null;
+            }
+          })() ||
+          "light";
+        var t = initial === "dark" ? "dark" : "light";
+        html.setAttribute("data-theme", t);
+        // native form controls + UA colors
+        html.style.colorScheme = t;
+      })();
+    </script>
+
+    <!-- let the browser know we support both but still set the choice manually -->
+    <meta name="color-scheme" content="light dark" />
+    <!-- updated live by the sync script so the URL bar matches -->
+    <meta name="theme-color" content="#ffffff" id="meta-theme-color" />
+
+    <title>Woorddle  by  Leafy Sea Dragons</title>
+    <link rel="stylesheet" href="./game.css" />
+  </head>
+  <body>
+    <!--  =========================================================
+            HEADER  /  CONTROLS
+         =========================================================
+            ✦ embed vs full-page behavior
+                • in full-page mode, game.js auto-runs (original classic flow)
+                • in embed mode (inside an iframe or ?ui=embed), the buttons below
+                  are used by the dialog layer so the UX stays inline
+    -->
+    <header class="game-header">
+      <h1 class="game-title">🐉  Leafy Sea Dragons' — Woorddle  🐉</h1>
+
+      <div class="game-actions">
+        <!-- buttons wired by game.js / wireControls() -->
+        <button id="btn-start" class="btn btn-primary">Start</button>
+        <button id="btn-rules" class="btn btn-ghost">Rules</button>
+        <button id="btn-restart" class="btn btn-danger" hidden>Restart</button>
+      </div>
+    </header>
+
+    <p>  🐉  Reload the page to run the game again !  🐉</p> 
+
+    <!-- optional console area used by game.js log() helper -->
+    <pre id="log" hidden class="log"></pre>
+
+    <!--  =========================================================
+            DIALOG  OVERLAY  (driven by game.js ask.* async layer)
+         =========================================================
+            ✦ game.js expects these IDs
+            ✦ start out hidden; game.js toggles  [hidden]  on/off
+    -->
+    <div id="ui-modal" class="modal" hidden>
+      <div role="dialog" aria-modal="true" class="modal-card">
+        <h2 id="ui-modal-title" class="modal-title">Notice</h2>
+
+        <div id="ui-modal-msg" class="modal-message">
+          <!-- game.js injects all dialog text here -->
+        </div>
+
+        <form id="ui-modal-form" class="modal-form">
+          <input
+            id="ui-modal-input"
+            class="modal-input"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Input"
+            style="display: none"
+          />
+
+          <div class="modal-actions">
+            <button type="button" id="ui-modal-cancel" class="btn btn-ghost" style="display: none">
+              Cancel
+            </button>
+            <button type="submit" id="ui-modal-ok" class="btn btn-primary">OK</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!--  =========================================================
+            THEME  SYNC  —  keep the game matched to my portfolio
+         =========================================================
+            ✦ what this does
+                • applies theme from parent <html data-theme> (when embedded) OR localStorage("mx-theme")
+                • listens for:
+                    - localStorage "storage" events (cross-tab / cross-iframe)
+                    - parent <html data-theme> changes via MutationObserver (same-origin only)
+                • updates: <html data-theme>, color-scheme, and <meta name="theme-color">
+            ✦ this is a "listen + apply" layer — my portfolio remains the source of truth
+    -->
+    <script>
+        /*  ---------------- theme sync (embed-aware) ----------------  */
+        (function () {
+            var KEY = "mx-theme"; // shared origin bridge
+            var html = document.documentElement;
+            var metaTheme = document.getElementById("meta-theme-color");
+
+            function applyTheme(theme) {
+            var t = theme === "dark" ? "dark" : "light";
+            html.setAttribute("data-theme", t);
+            html.style.colorScheme = t;
+            // keep browser UI in sync (tab color on mobile, etc.)
+            if (metaTheme) {
+                // pick contrasting theme-color from computed CSS custom properties
+                var root = getComputedStyle(html);
+                // uses --surface as the app card bg in both themes (defined in CSS)
+                var bg = root.getPropertyValue("--surface").trim() || (t === "dark" ? "#0f172a" : "#f9fafb");
+                metaTheme.setAttribute("content", bg);
+            }
+            }
+
+            function read() {
+            // try parent first if embedded + same-origin
+            try {
+                if (window.parent && window.parent !== window) {
+                var parentDoc = window.parent.document;
+                var attr = parentDoc && parentDoc.documentElement.getAttribute("data-theme");
+                if (attr) return attr;
+                }
+            } catch (_) {}
+            // else shared storage
+            try {
+                var v = localStorage.getItem(KEY);
+                if (v) return v;
+            } catch (_) {}
+            return "light";
+            }
+
+            // initial sync (post-CSS, but pre-game)
+            applyTheme(read());
+
+            // cross-tab / cross-iframe updates when my portfolio writes mx-theme
+            window.addEventListener("storage", function (e) {
+            if (e && e.key === KEY && e.newValue) applyTheme(e.newValue);
+            });
+
+            // live parent <html data-theme> updates (only if same-origin + embedded)
+            try {
+            if (window.parent && window.parent !== window) {
+                var parentDoc = window.parent.document;
+                if (parentDoc && parentDoc.documentElement) {
+                new MutationObserver(function (muts) {
+                    muts.forEach(function (m) {
+                    if (m.attributeName === "data-theme") {
+                        var t = parentDoc.documentElement.getAttribute("data-theme");
+                        if (t) applyTheme(t);
+                    }
+                    });
+                }).observe(parentDoc.documentElement, { attributes: true });
+                }
+            }
+            } catch (_) {}
+
+            // optional  -->  let parent call window.__woorddleSetTheme("dark"|"light")
+            window.__woorddleSetTheme = applyTheme;
+        })();
+    </script>
+
+
+    <footer class="site-foot" role="contentinfo">
+      <p>©  <br />  🐉  Leafy Sea Dragons  🐉</p>
+    </footer>
+
+    <!-- game code -->
+    <script defer src="./game.js"></script>
   </body>
 </html>

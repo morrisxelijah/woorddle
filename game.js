@@ -38,7 +38,7 @@
 
 
 /* ---------------- querystring reader (tiny, safe helper) ----------------
-   pulls named parameter from  window.location.search  and returns string or null
+    pulls named parameter from  window.location.search  and returns string or null
 */
 function getQueryParam(name) {
   const params = new URLSearchParams(window.location.search);    // tiny API for query parsing
@@ -46,10 +46,11 @@ function getQueryParam(name) {
 }
 
 /* ---------------- environment switch (single flag) ----------------
-   isEmbed  -->  true when  ?ui=embed  so we render dialogs inside this iframe
+    isEmbed  -->  true when  ?ui=embed  so we render dialogs inside this iframe
 */
 const ENV = {
-  isEmbed: (getQueryParam("ui") === "embed"),    // boolean switch used by the dialog layer + startup behavior
+    // embed if ?ui=embed  OR  if the game's inside an iframe
+    isEmbed: (getQueryParam("ui") === "embed") || (window.self !== window.top),    // boolean switch used by the dialog layer + startup behavior
 };
 
 /* ---------------- DOM shortcuts ---------------- */
@@ -70,9 +71,9 @@ const ask = (() => {
     /* ---------- non-embed fallback  -->  original blocking dialogs (same behavior) ---------- */
     if (!ENV.isEmbed) {
         return {
-        alert: async (msg) => { window.alert(msg); },    // same signature as our async version
-        confirm: async (msg) => { return window.confirm(msg); },    // resolves to boolean
-        prompt: async (msg, defVal = "") => { return window.prompt(msg, defVal); },  // resolves to string or null
+            alert: async (msg) => { window.alert(msg); },    // same signature as our async version
+            confirm: async (msg) => { return window.confirm(msg); },    // resolves to boolean
+            prompt: async (msg, defVal = "") => { return window.prompt(msg, defVal); },  // resolves to string or null
         };
     }
 
@@ -88,9 +89,9 @@ const ask = (() => {
     // guard  -->  if any element is missing, gracefully fall back to native dialogs
     if (!modal || !titleEl || !msgEl || !formEl || !inputEl || !okBtn || !cancelBtn) {
         return {
-        alert: async (msg) => { window.alert(msg); },
-        confirm: async (msg) => { return window.confirm(msg); },
-        prompt: async (msg, defVal = "") => { return window.prompt(msg, defVal); },
+            alert: async (msg) => { window.alert(msg); },
+            confirm: async (msg) => { return window.confirm(msg); },
+            prompt: async (msg, defVal = "") => { return window.prompt(msg, defVal); },
         };
     }
 
@@ -498,8 +499,9 @@ const demoDictionary = [
 ];
 
 // check type then non-empty  -->  only switch if real data exists (loaded correctly)
-const externalDict = (typeof window !== "undefined") ? require('./dictionaryData') : null ;
-// const externalDict = (typeof window !== "undefined" && Array.isArray(window.dictionaryData)) ? window.dictionaryData : null;
+// const externalDict  =  (typeof window !== "undefined") ? require('./dictionaryData') : null ;
+// browser-safe  -->  reads the array injected by dictionaryData.js
+const externalDict = (typeof window !== "undefined" && Array.isArray(window.dictionaryData)) ? window.dictionaryData : null;
 const activeDictionary = (externalDict && externalDict.length)
     ? externalDict    // prefer external list when available  (portfolio mode)
     : demoDictionary;    // fallback to local demo / dev version
@@ -1523,7 +1525,28 @@ async function playGameMulti(previousSetupInfo) {
 
 
 
+// ----- button controls on the page (only used when present) -----
+function wireControls() {
+  const btnStart   = document.getElementById("btn-start");
+  const btnRules   = document.getElementById("btn-rules");
+  const btnRestart = document.getElementById("btn-restart");
+
+  if (btnStart)   btnStart.addEventListener("click", async () => { btnRestart.hidden = false; await intro(); });
+  if (btnRules)   btnRules.addEventListener("click", async () => { await ask.alert(messages.rulesInfo()); });
+  if (btnRestart) btnRestart.addEventListener("click", () => window.location.reload());
+}
+
+
+
+
 /*  =========================================================
         BOOT UP  -->  actual entry point
     ========================================================= */
-intro();    // starts the game flow at the welcome → menu  -->  then follows the router paths
+
+if (ENV.isEmbed) {
+  // in iframe  -->  don’t auto-run, show the start screen and buttons
+  wireControls();
+} else {
+  // full page  -->  behave like the classic version (auto-runs)
+  intro();    // starts the game flow at the welcome → menu  -->  then follows the router paths
+}
