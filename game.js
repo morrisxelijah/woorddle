@@ -796,11 +796,11 @@ function displayGuess(attemptsOverride) {
                 .join("     ");    // 5 spaces chosen after eyeballing for readability in dialogs
 
             // emojis are also spaced  →  visual parallel to spacedLetters string above
-            const feedbackRow = emojiRow.join("   ");    // 3 spaces keeps total width balanced vs. letters row
+            const feedbackRow = emojiRow.join("    ");    // 3 spaces keeps total width balanced vs. letters row
 
             // final 2-line block with attempt counter (1-based) and fixed max for context
             return `${indexNum + 1}  of  ${config.maxGuesses}  :    ${spacedLetters}\n` +
-                   `                                 ${feedbackRow}`;
+                   `                  ${feedbackRow}`;
         })
         .join("\n");    // stack all attempts in order
 
