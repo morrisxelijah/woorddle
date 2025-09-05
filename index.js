@@ -26,156 +26,6 @@
 
 
 
-/*  =============================================================================
-        HELPERS  --  EMBED / PORTFOLIO  MODE  -->  runs dialogs inside iframe
-    =============================================================================
-        ✦ goal  -->  keep original logic + messages  but render UI inside the iframe (no full-tab, blocking browser dialogs)
-        ✦ pattern  -->  async dialog layer that mirrors  alert / confirm / prompt  with Promises
-            • falls back to native dialogs when not in embed mode
-            • driven by  <div id="ui-modal">  markup in index.html
-            • focus behavior + ESC to cancel
-*/
-
-
-/* ---------------- querystring reader (tiny, safe helper) ----------------
-   pulls named parameter from  window.location.search  and returns string or null
-*/
-function getQueryParam(name) {
-  const params = new URLSearchParams(window.location.search);    // tiny API for query parsing
-  return params.get(name);    // null if missing
-}
-
-/* ---------------- environment switch (single flag) ----------------
-   isEmbed  -->  true when  ?ui=embed  so we render dialogs inside this iframe
-*/
-const ENV = {
-  isEmbed: (getQueryParam("ui") === "embed"),    // boolean switch used by the dialog layer + startup behavior
-};
-
-/* ---------------- DOM shortcuts ---------------- */
-const $ = (sel) => document.querySelector(sel);    // 1 selector, used sparingly below
-const logEl = $("#log");    // optional console-like area in the page
-function log(line) {    // helper for demo / debugging
-  if (logEl) { logEl.hidden = false; logEl.textContent += String(line) + "\n"; }
-}
-
-/* ---------------- in-iframe dialog layer (async, Promise-based) ----------------
-   mirrors browser dialogs (same 'shape') so the rest of the game can stay the same
-        ask.alert(text)            --> Promise<void>
-        ask.confirm(text)          --> Promise<boolean>
-        ask.prompt(text, default)  --> Promise<string|null>
-   note: returns *native* dialogs when not in embed mode (keeps classic UX intact)
-*/
-const ask = (() => {
-    /* ---------- non-embed fallback  -->  original blocking dialogs (same behavior) ---------- */
-    if (!ENV.isEmbed) {
-        return {
-        alert: async (msg) => { window.alert(msg); },    // same signature as our async version
-        confirm: async (msg) => { return window.confirm(msg); },    // resolves to boolean
-        prompt: async (msg, defVal = "") => { return window.prompt(msg, defVal); },  // resolves to string or null
-        };
-    }
-
-    /* ---------- embed path  -->  wires up the reusable modal elements ---------- */
-    const modal     = $("#ui-modal");    // root overlay container (hidden=true by default)
-    const titleEl   = $("#ui-modal-title");    // small title line (changes with mode)
-    const msgEl     = $("#ui-modal-msg");    // multi-line text area for messages
-    const formEl    = $("#ui-modal-form");    // wraps input + buttons (so Enter submits)
-    const inputEl   = $("#ui-modal-input");    // text input used only by prompt()
-    const okBtn     = $("#ui-modal-ok");    // primary action button (OK / Continue)
-    const cancelBtn = $("#ui-modal-cancel");    // secondary action button (Cancel)
-
-    // guard  -->  if any element is missing, gracefully fall back to native dialogs
-    if (!modal || !titleEl || !msgEl || !formEl || !inputEl || !okBtn || !cancelBtn) {
-        return {
-        alert: async (msg) => { window.alert(msg); },
-        confirm: async (msg) => { return window.confirm(msg); },
-        prompt: async (msg, defVal = "") => { return window.prompt(msg, defVal); },
-        };
-    }
-
-    // internal, per-open state  -->  kept tiny and reset on close
-    let currentResolver = null;    // resolves the current dialog's Promise
-    let currentMode = "alert";    // "alert" | "confirm" | "prompt"
-    let keyHandler = null;    // reference for ESC handler so we can remove it on close
-
-    /* ---------- show modal with a specific mode + text (and optional default) ---------- */
-    function open(type, message, defVal = "") {
-        currentMode = type;    // remember what UX to show
-        titleEl.textContent = (
-        type === "alert"   ? "Notice" :
-        type === "confirm" ? "Please Confirm" :
-                            "Enter a value"
-        );
-        msgEl.textContent = message || "";    // clear vs undefined friendliness
-        inputEl.value = defVal || "";    // applies only to prompt()
-
-        // toggle visible controls by mode (keeps one modal, no conditional DOM inserts)
-        inputEl.style.display   = (type === "prompt") ? "block" : "none";
-        cancelBtn.style.display = (type !== "alert")  ? "inline-flex" : "none";
-
-        // reveal + focus management
-        modal.hidden = false;    // display modal overlay
-        setTimeout(() => {    // wait a tick so element is focusable
-        if (type === "prompt") inputEl.focus(); else okBtn.focus();
-        }, 0);
-
-        // minimal key support  -->  ESC cancels (matches browser dialogs muscle memory)
-        keyHandler = (e) => {
-        if (e.key === "Escape") { e.preventDefault(); doCancel(); }
-        };
-        document.addEventListener("keydown", keyHandler);
-    }
-
-    /* ---------- hide modal and clean up listeners / transient state ---------- */
-    function close() {
-        modal.hidden = true;    // hide overlay
-        document.removeEventListener("keydown", keyHandler);    // remove ESC handler
-        keyHandler = null;    // release reference
-    }
-
-    /* ---------- resolve helper (single exit for success paths) ---------- */
-    function resolveNow(value) {
-        if (currentResolver) currentResolver(value);    // release the awaiting Promise
-        currentResolver = null;    // reset
-    }
-
-    /* ---------- user chose 'Cancel' or ESC ---------- */
-    function doCancel() {
-        // shape aligns with browser dialogs:
-        //   prompt → null, confirm → false, alert → undefined
-        if (currentMode === "prompt") resolveNow(null);
-        else if (currentMode === "confirm") resolveNow(false);
-        else resolveNow(undefined);
-        close();
-    }
-
-    /* ---------- user chose 'OK' (Enter or button) ---------- */
-    function doOk() {
-        // shape aligns with browser dialogs:
-        //   prompt → string, confirm → true, alert → undefined
-        if (currentMode === "prompt") resolveNow(String(inputEl.value).trim());
-        else if (currentMode === "confirm") resolveNow(true);
-        else resolveNow(undefined);
-        close();
-    }
-
-    /* ---------- wire UI events (submit / buttons) ---------- */
-    formEl.addEventListener("submit", (e) => { e.preventDefault(); doOk(); });  // Enter submits safely
-    cancelBtn.addEventListener("click", doCancel);    // Cancel click → cancel path
-    okBtn.addEventListener("click", doOk);    // OK click → ok path
-
-    /* ---------- public API (async) ---------- */
-    return {
-        alert:  (text)    => new Promise((resolve) => { currentResolver = resolve; open("alert",   text);           }),
-        confirm:  (text)    => new Promise((resolve) => { currentResolver = resolve; open("confirm", text);           }),
-        prompt:  (text, defVal = "")  => new Promise((resolve) => { currentResolver = resolve; open("prompt",  text, defVal);  }),
-    };
-})();
-
-
-
-
 /*  =========================================================
         CONFIGURATION  &  STATE
     ========================================================= */
@@ -219,6 +69,7 @@ const classicDefaults = { wordLength: 5, maxGuesses: 6, gameRounds: 1 };
         ✦ plain strings for fixed phrases  ;  small methods for places that use the 'live' config/state
     -------------------------------------------------------------
 */
+
 const messages = {
     /* ---------------- fixed snippets ---------------- */
     welcome: "Welcome  ‼️  \n\nWould you like to play a word puzzle game ?",
@@ -227,7 +78,7 @@ const messages = {
     endLast: "              💔\nSo sad to see you leave...  \nI guess you're not that fun after all.  \n\n...game window closing... \n          😂",
     needMorePlayers: "Requires at least 2 players !",
 
-    /* ----------------  menus  ----------------
+    /* ---------------- menus  (consolidated) ----------------
         phase options  -->  "mode" | "rules" | "post"
             - "mode"  -->  choose solo / multiplayer / quit
             - "rules"  -->  shows classic vs custom for a specific mode (modeName is printed)
@@ -392,28 +243,17 @@ const messages = {
             `This game:    ${afterPenalty}  points   ( - ${penalty}  penalty )` + allLine;
     },
 
-    /* ---------------- session / series summary ----------------
-        important  -->  keeping the same return strings so downstream alerts stay consistent
-        notes:
-            • supports 3 shapes:
-                1) multiplayer/series object (has .standings)  → prints leaders + averages
-                2) solo session array (2+ elements)             → total/avg/best/worst across games
-                3) single round score object                    → prints detailed score breakdown
-    */
+    /* ---------------- session / series summary ---------------- */
     statSummary(objOrArr) {
         // multi / series or mid-game objects have standings
         if (objOrArr && objOrArr.standings) {    // detect multi summaries
             const scores = objOrArr;    // alias for readability
             const avgLabel = scores.scope === "series" ? "Average Game" : "Average Guess";    // wording changes depending on scope
 
-            // one-liner for the most interesting headline in this context
-            //    series → best single game in the series
-            //    mid-game standings → current running total leader
             const firstLine = scores.leaderSingleGame
                 ? `Best Game:                ${scores.leaderSingleGame.name}    ( ${scores.leaderSingleGame.points}  points  in  Game  ${scores.leaderSingleGame.gameAt} )`
                 : `Running Total:        ${scores.leaderTotal.name}        ( ${scores.leaderTotal.total}  points )`;
 
-            // best & worst attempt lines change phrasing for series vs per-guess view
             const bestAttemptLine = scores.scope === "series"
                 ? `Best Attempt:             ${scores.leaderBest.name}     ( ${scores.leaderBest.best}  points )`
                 : `Best Attempt:             ${scores.leaderBest.name}     ( Attempt  ${scores.leaderBest.bestAt}  -->  ${scores.leaderBest.best}  points )`;
@@ -422,7 +262,6 @@ const messages = {
                 ? `Weakest Attempt:       ${scores.leaderWorst.name}     ( ${scores.leaderWorst.worst}  points )`
                 : `Weakest Attempt:       ${scores.leaderWorst.name}     ( Attempt ${scores.leaderWorst.worstAt} -->  ${scores.leaderWorst.worst}  points )`;
 
-            // final assemble  →  chosen to be concise but comparable across views
             return (
                 `${firstLine}\n` +
                 `${avgLabel}:          ${scores.leaderAvg.name}    ( ${parseFloat(scores.leaderAvg.average.toFixed(2))}  points )\n` +
@@ -436,18 +275,16 @@ const messages = {
             const rounds = objOrArr;    // alias  -->  expected as array of game totals
             if (rounds.length < 2) return "";    // only show if 2+ rounds
 
-            // pull out numeric totals to compute rollups (sum, avg, best, worst)
-            const totals = rounds.map(r => r.totalPoints);    // shape: [number, number, ...]
-            const roundsPlayed = totals.length;
-            const totalPointsAll = totals.reduce((a, b) => a + b, 0);
-            const averagePoints = parseFloat((totalPointsAll / roundsPlayed).toFixed(2));    // trim to 2 decimals for dialogs
+            const totals = rounds.map(r => r.totalPoints);    // pull out an array of numeric totals
+            const roundsPlayed = totals.length;    // length of totals  ( used for avg )
+            const totalPointsAll = totals.reduce((a, b) => a + b, 0);    // sum all points ( start at 0 )
+            const averagePoints = parseFloat((totalPointsAll / roundsPlayed).toFixed(2));    // format to 2 decimals and remove whitespeace ( leading/trailing zeros )
 
-            const bestRoundPoints = Math.max(...totals);
-            const worstRoundPoints = Math.min(...totals);
-            const bestRoundAt = totals.indexOf(bestRoundPoints) + 1;     // 1-based for humans
-            const worstRoundAt = totals.indexOf(worstRoundPoints) + 1;   // same idea
+            const bestRoundPoints = Math.max(...totals);    // highest total using the whole array
+            const worstRoundPoints = Math.min(...totals);    // lowest total  ;  same spread approach
+            const bestRoundAt = totals.indexOf(bestRoundPoints) + 1;    // convert to human friendly ( 1-based index )
+            const worstRoundAt = totals.indexOf(worstRoundPoints) + 1;    // same idea here
 
-            // block aligned for quick scanning after a game
             return `SESSION   SUMMARY    -->    ${roundsPlayed}  rounds
 
         Total:                           ${totalPointsAll}  points
@@ -458,15 +295,12 @@ const messages = {
 
         // single round summary object
         const gameScore = objOrArr;    // single game’s stats  / per-game summary
-        // conditional lines so the block doesn’t print empty bonus/penalty rows
         const bonusLine = (gameScore.unusedGuessPoints || 0) > 0
             ? `\n        Bonus  Points:     ${gameScore.unusedGuessPoints}`
             : "";
         const penaltyLine = (gameScore.quitPenalty || 0) > 0
             ? `\n        Quit  Penalty:     - ${gameScore.quitPenalty}`
             : "";
-
-        // compact 3-line summary  (keeps math visible after reveal)
         return `Score Summary:
                 Guess  Points:     ${gameScore.guessesPoints}${bonusLine}${penaltyLine}
                 Total  Points:       ${gameScore.totalPoints}`;
@@ -483,7 +317,6 @@ const messages = {
         ✦ checks for presentation mode and external dict first before switching  ( avoid crashes )
     ------------------------------------------------------------
 */
-
 const demoDictionary = [
     { word: "apple", definition: "A round, crisp fruit from an apple tree." },
     { word: "angle", definition: "The figure formed by two lines meeting at a point." },
@@ -497,9 +330,8 @@ const demoDictionary = [
     { word: "avoid", definition: "To keep away from." },
 ];
 
-// check type then non-empty  -->  only switch if real data exists (loaded correctly)
-const externalDict = (typeof window !== "undefined") ? require('./dictionaryData') : null ;
-// const externalDict = (typeof window !== "undefined" && Array.isArray(window.dictionaryData)) ? window.dictionaryData : null;
+// check for full dict  -->  only switch if real data exists (loaded correctly)
+const externalDict = (typeof window !== "undefined" && Array.isArray(window.dictionaryData)) ? window.dictionaryData : null;
 const activeDictionary = (externalDict && externalDict.length)
     ? externalDict    // prefer external list when available  (portfolio mode)
     : demoDictionary;    // fallback to local demo / dev version
@@ -547,6 +379,7 @@ function safeWordLength(requestedLength, dictList) {
 function pickAWord(dictList, excludeList = gameState.history) {
     const safeLen = safeWordLength(config.wordLength, dictList);    // clamp length safely  -->  protects filters below from breaking
     config.wordLength = safeLen;    // add to config so other functions rely on a valid length
+
 
     let candidateDict = dictList.filter(entry =>    // build pool of candidate enties 
         entry.word.length === config.wordLength &&    // only keep words with the correct length (updated one)
@@ -596,24 +429,20 @@ function customConfig(inputLine) {
             • function calls itself again when a retry is needed  -->  keeps the same board context visible for guidance
             • cancel/ESC returns null so the caller can confirm quitting on this game word
 */
-async function validateGuess(inputLine, boardTextForRetry) {
+function validateGuess(inputLine, boardTextForRetry) {
     if (inputLine === null) return null;    // cancel/Esc  -->  pass to caller to confirm
 
-    const cleanedGuess = inputLine.toLowerCase().replace(/[^a-z0-9]/g, "");    // format to lowercase (same as dictionary) + strip to letters/numbers
+    const cleanedGuess = inputLine.toLowerCase().replace(/[^a-z0-9]/g, "");    // format to lowercase (same as dictionary) + strip to letters/numbers  ;  also used to normalize team names and words
     const isRightLength = (cleanedGuess.length === config.wordLength);    // exact length check  -->  based on current config
-    const isInDictionary = activeDictionary.some(entry => entry.word === cleanedGuess);    // enforce membership in game dictionary
+    const isInDictionary = activeDictionary.some(entry => entry.word === cleanedGuess);    // enforce membership in game dictionary  (may be a real word but it may not be in the game)  ;  .some() stops early when found
 
     if (!isRightLength) {    // player input is the wrong length  -->  shows exact target length for clarity
-        const nextInput = await ask.prompt(
-            messages.invalidGuess("length", { inputLen: cleanedGuess.length, neededLen: config.wordLength, boardText: boardTextForRetry })
-        );    // clearly explains the expected size
+        const nextInput = prompt(messages.invalidGuess("length", { inputLen: cleanedGuess.length, neededLen: config.wordLength, boardText: boardTextForRetry }));    // clearly explains the explected size
         return validateGuess(nextInput, boardTextForRetry);    // recursive retry  with the  same game board for context
     }
 
     if (!isInDictionary) {    // input is the correct length but an unknown word (not in game's dictionary)
-        const nextInput = await ask.prompt(
-            messages.invalidGuess("unknown", { cleanWord: cleanedGuess, boardText: boardTextForRetry })
-        );    // encourage another try
+        const nextInput = prompt(messages.invalidGuess("unknown", { cleanWord: cleanedGuess, boardText: boardTextForRetry }));    // encourage another try
         return validateGuess(nextInput, boardTextForRetry);    // recursive retry
     }
 
@@ -645,7 +474,7 @@ function scoreGuess(cleanedGuessWord, targetWordOverride) {
             gradeArray[i] = config.emojis.correct;    // issue green mark for the correct spot
         } else {
             const letterAtTarget = targetArray[i];    // letter to count for yellows later (only non-green positions are remembered in frequency map)
-            remainingLetterCount[letterAtTarget]  =  (remainingLetterCount[letterAtTarget] || 0) + 1;    // increment count for this letter
+            remainingLetterCount[letterAtTarget] = (remainingLetterCount[letterAtTarget] || 0) + 1;    // increment count for this letter  ;  initializes with 0 on first sight
         }
     }
 
@@ -685,84 +514,90 @@ function emojiGuessPoints(emojiArray) {
     compute totals for the current gameState (solo or per-player in multi)
     includeBonus  -->  when true, adds remaining * wordLength * correctValue to player's score
 */
+function computeUserScore(includeBonus) {
+    const perGuessPoints = gameState.attempts.map(([word, emojiRow]) => {    // extract per-guess points
+        return emojiRow.reduce((sum, grade) => {    // sum emojis to a row score
+            let emojiValue = 0;    // default
+            if (grade === config.emojis.correct) emojiValue = config.pointsValue.correct;    // green value
+            else if (grade === config.emojis.almost) emojiValue = config.pointsValue.almost;    // yellow value
+            else emojiValue = config.pointsValue.incorrect;    // white value
+            return sum + emojiValue;    // accumulate row total
+        }, 0);    // accumulate sum from 0
+    });
+
+    const guessesPoints = perGuessPoints.reduce((a, b) => a + b, 0);    // sum all rows (overall base score)
+
+    const unusedGuessPoints = includeBonus
+        ? gameState.remaining * config.wordLength * config.pointsValue.correct    // bonus locks when game round ends
+        : 0;    // mid-game display hides bonus  ( prevents confusion )
+
+    const totalPoints = guessesPoints + unusedGuessPoints;    // overall total ( base + bonus )
+    return { totalPoints, unusedGuessPoints, perGuessPoints, guessesPoints };    // full breakdown  -->  used by summaries
+}
+
+/*
+    build standings and leaders from a list of player objects (multiplayer)
+    includeBonusFlag -->  true | false | "finishedOnly" (show bonus only if that player finished).
+    also tracks penaltySoFar  -->  mirror bonus displays
+*/
 function computeGameStats(playersArray, includeBonusFlag = true) {
-    const mixedBonus = (includeBonusFlag === "finishedOnly");    // single switch for mid-cycle behavior
+    const mixedBonus = (includeBonusFlag === "finishedOnly");    // special mid-cycle mode  -->  avoids showing future bonus
 
-    // per-player calculations  -->  totals + best/worst/avg + optional penalties (quit)
-    const totals = playersArray.map(player => {
-        /* ---------- swap trick ---------- 
-            temporarily point the shared gameState board at this player's board
-              -->  reuse the solo scorer (computeUserScore) with zero changes
-        */
+    const totals = playersArray.map(player => {    // compute one stat sheet per player
+        const savedAttempts = gameState.attempts;    // save global board
+        const savedRemaining = gameState.remaining;    // save remaining attempts (for bonus/penalty calcs)
 
-        // stash globals
-        const savedAttempts = gameState.attempts;
-        const savedRemaining = gameState.remaining;
-
-        // redirect scorers to player data
-        gameState.attempts = player.attempts;
+        gameState.attempts = player.attempts;    // tell scorer to use this player’s performance data (reuse computeUserScore)
         gameState.remaining = player.remaining;
 
-        const scoreNoBonus   = computeUserScore(false).totalPoints;    // base score (no remaining-guess bonus)
-        const scoreWithBonus = computeUserScore(true).totalPoints;    // full score (bonus if finished)
+        const scoreNoBonus = computeUserScore(false).totalPoints;    // base score (no bonus)
+        const scoreWithBonus = computeUserScore(true).totalPoints;    // full score (includes locked in bonus)
 
-        // restore globals
-        gameState.attempts = savedAttempts;
-        gameState.remaining = savedRemaining;
+        gameState.attempts = savedAttempts;    // restore global board  --> avoid any mutations / changes
+        gameState.remaining = savedRemaining;    // restore remaining
 
-        // positive bonus delta (never negative)  -->  used for "incl. X bonus" tag in standings
-        const bonusPotential = Math.max(0, scoreWithBonus - scoreNoBonus);
+        const bonusPotential = Math.max(0, scoreWithBonus - scoreNoBonus);    // non-negative bonus amount
 
-        // choose which total to display based on includeBonusFlag
         let total = mixedBonus
-            ? (player.status !== "playing" ? scoreWithBonus : scoreNoBonus)    // only finished players show bonus
-            : (includeBonusFlag ? scoreWithBonus : scoreNoBonus);    // all or none
+            ? (player.status !== "playing" ? scoreWithBonus : scoreNoBonus)    // only finished players show a bonus
+            : (includeBonusFlag ? scoreWithBonus : scoreNoBonus);
 
-        // optional quit penalty (mirrors bonus size)  -->  removes locked bonus that would have existed
-        let penaltyNow = 0;
-        if (mixedBonus || includeBonusFlag === true) {    // only subtract when bonus is expected to be visible
+        let penaltyNow = 0;    // tracks penalty to mirror “incl. bonus” display
+        if (mixedBonus || includeBonusFlag === true) {    // only subtract penalties where bonus displays are expected
             if (player.status === "quit") {
-                penaltyNow = (player.remainingAtQuit || 0) * config.wordLength * config.pointsValue.correct;    // same product as bonus
-                total -= penaltyNow;    // apply penalty to displayed total
+                penaltyNow = (player.remainingAtQuit || 0) * config.wordLength * config.pointsValue.correct;    // mirror bonus size
+                total -= penaltyNow;    // remove what would have been the bonus for 'finishing' early
             }
         }
 
-        // per-guess analytics  -->  average / best / worst (safe even with empty roundPoints)
-        const attemptRow = Array.isArray(player.roundPoints) ? player.roundPoints : [];
-        const count   = Math.max(1, attemptRow.length);    // guard divide-by-zero
-        const average = attemptRow.reduce((a, b) => a + b, 0) / count;
+        const attemptRow = Array.isArray(player.roundPoints) ? player.roundPoints : [];    // per-guess points list
+        const count = Math.max(1, attemptRow.length);    // guard against divide-by-zero
+        const average = attemptRow.reduce((a, b) => a + b, 0) / count;    // average per guess score
 
-        let best = -Infinity,  bestAt = 0;    // best single guess + which attempt it was
-        for (let i = 0; i < attemptRow.length; i++) {
-            if (attemptRow[i] > best) { best = attemptRow[i]; bestAt = i + 1; }
-        }
-        if (best === -Infinity) { best = 0; bestAt = 0; }    // normalize when no attempts yet
+        let best = -Infinity, bestAt = 0;    // track best single guess
+        for (let i = 0; i < attemptRow.length; i++) { if (attemptRow[i] > best) { best = attemptRow[i]; bestAt = i + 1; } }
+        if (best === -Infinity) { best = 0; bestAt = 0; }
 
-        let worst = Infinity,  worstAt = 0;    // weakest single guess + which attempt it was
-        for (let i = 0; i < attemptRow.length; i++) {
-            if (attemptRow[i] < worst) { worst = attemptRow[i]; worstAt = i + 1; }
-        }
-        if (worst === Infinity) { worst = 0; worstAt = 0; }    // normalize when no attempts yet
+        let worst = Infinity, worstAt = 0;    // track weakest single guess
+        for (let i = 0; i < attemptRow.length; i++) { if (attemptRow[i] < worst) { worst = attemptRow[i]; worstAt = i + 1; } }
+        if (worst === Infinity) { worst = 0; worstAt = 0; }
 
-        // return row shape used by callers + standings builder
         return mixedBonus
             ? { name: player.name, total, average, best, bestAt, worst, worstAt, bonusSoFar: (player.status !== "playing") ? bonusPotential : 0, penaltySoFar: penaltyNow }
             : { name: player.name, total, average, best, bestAt, worst, worstAt };
     });
 
-    // sorted list for quick printing (desc by totalPoints)
     const standings = totals
         .map(row => mixedBonus
             ? ({ name: row.name, totalPoints: row.total, bonusSoFar: row.bonusSoFar, penaltySoFar: row.penaltySoFar })
             : ({ name: row.name, totalPoints: row.total })
         )
-        .sort((a, b) => b.totalPoints - a.totalPoints);    // leaderboard style
+        .sort((a, b) => b.totalPoints - a.totalPoints);    // descending by total points
 
-    // leaders across different cut views (copy arrays before sort to avoid mutating 'totals')
-    const leaderTotal = totals.slice().sort((a, b) => b.total   - a.total  )[0];    // highest game total
-    const leaderAvg   = totals.slice().sort((a, b) => b.average - a.average)[0];    // highest average per guess
-    const leaderBest  = totals.slice().sort((a, b) => b.best    - a.best   )[0];    // strongest single attempt
-    const leaderWorst = totals.slice().sort((a, b) => a.worst   - b.worst  )[0];    // weakest single attempt (asc)
+    const leaderTotal = totals.slice().sort((a, b) => b.total - a.total)[0];    // copy before sort to avoid mutations
+    const leaderAvg   = totals.slice().sort((a, b) => b.average - a.average)[0];
+    const leaderBest  = totals.slice().sort((a, b) => b.best - a.best)[0];
+    const leaderWorst = totals.slice().sort((a, b) => a.worst - b.worst)[0];
 
     return { standings, leaderTotal, leaderAvg, leaderBest, leaderWorst };    // shape expected by messages.statSummary
 }
@@ -771,39 +606,23 @@ function computeGameStats(playersArray, includeBonusFlag = true) {
 
 
 /*  ===================================================================================================
-        HELPERS  -- BOARD PRINTER  -->  turns the game board into a text block (for dialogs)
+        HELPERS  -- BOARD PRINTER  -->  turns the game board into a string for inclusion in dialogs
     ===================================================================================================
-        ✦ why  -->  dialogs show a compact, readable board without extra UI widgets
-        ✦ layout
-            • each attempt prints in 2 lines
-                → line 1 = UPPERCASE letters spaced out  (aligns visually with emoji row)
-                → line 2 = emoji grades with padding     (✅ / 🟨 / ⬜️)
-            • legend added once at the end (emoji meanings + point values)
 */
 function displayGuess(attemptsOverride) {
-    const attemptsToShow = attemptsOverride || gameState.attempts;    // defaults to current global board (solo) ; allows per-player board in multi
-
-    // map each attempt to a 2-line block then join with newlines to build one big board text
+    const attemptsToShow = attemptsOverride || gameState.attempts;    // 1 printer for both game modes  -->  allow for a custom game board (in multiplayer)
     const attemptText = attemptsToShow
-        .map((pairRow, indexNum) => {
-            const guessWord = pairRow[0];    // top line source (letters)
-            const emojiRow  = pairRow[1];    // bottom line source (grades per letter)
-
-            // highlight with UPPERCASE, then add fixed spacing between letters so columns line up with emojis below
-            const spacedLetters = guessWord.toUpperCase().split("")    // split into individual letters
-                .join("     ");    // 5 spaces chosen after eyeballing for readability in dialogs
-
-            // emojis are also spaced  →  visual parallel to spacedLetters string above
-            const feedbackRow = emojiRow.join("   ");    // 3 spaces keeps total width balanced vs. letters row
-
-            // final 2-line block with attempt counter (1-based) and fixed max for context
-            return `${indexNum + 1}  of  ${config.maxGuesses}  :    ${spacedLetters}\n` +
-                   `                                 ${feedbackRow}`;
+        .map((pairRow, indexNum) => {    // build two-line block per attempt  ;  formatt for easy comparison of letter accuracy
+            const guessWord = pairRow[0];    // guessed word (string)  ;  top line  -->  letters
+            const emojiRow = pairRow[1];    // marks (array)  ;  bottom line  -->  grade per letter
+            const spacedLetters = guessWord.toUpperCase().split("")    // caps to highlight the guess then split into letters array
+                .join("     ");    // pad letters to align with grade marks
+            const feedbackRow = emojiRow.join("   ");    // space out grade marks to simulate a column-like look
+            return `Attempt  ${indexNum + 1}  of  ${config.maxGuesses} :    ${spacedLetters}\n                                 ${feedbackRow}`;    // add the 2 lines together
         })
-        .join("\n");    // stack all attempts in order
+        .join("\n");    // stack all blocks (previous guesses + grades) with newlines to make 1 string to show
 
-    // legend once at the end  →  keeps the "what does each emoji mean" accessible across attempts
-    return attemptText + "\n" + messages.legendLine();
+    return attemptText + "\n" + messages.legendLine();    // append legend 1 time to the very bottom so a quick key always visible
 }
 
 
@@ -812,22 +631,23 @@ function displayGuess(attemptsOverride) {
 /*  =========================================================
         GAME ENTRY / EXIT  -->  intro + outro
     ========================================================= */
-async function intro() {
-    const responseYes = await ask.confirm(messages.welcome);    // funnel to menus or exit game  -->  OK to continue  ;  cancel/ESC to leave
+
+function intro() {
+    const responseYes = confirm(messages.welcome);    // funnel to menus or exit game  -->  OK to continue  ;  cancel/ESC to leave
     if (responseYes) {
         return menuRouter("main");    // go to the main menu  -->  choose mode → rules → play
     } else {
-        await ask.alert(messages.startOver);    // friendly close
+        alert(messages.startOver);    // friendly close  ;  lol, wait for it
         return outro();    // lets player reconsider exit
     }
 }
 
-async function outro() {
-    const didChangeMind = await ask.confirm(messages.endGame);    // gives a second chance   -->  accidental cancel safety net
+function outro() {
+    const didChangeMind = confirm(messages.endGame);    // gives a second chance   -->  accidental cancel safety net
     if (didChangeMind) {
         return intro();    // jump back to entry point ( fresh start )
     } else {
-        await ask.alert(messages.endLast);    // final goodbye  -->  session ends
+        alert(messages.endLast);    // final goodbye  -->  session ends
     }
 }
 
@@ -837,55 +657,51 @@ async function outro() {
 /*  ============================================================================================================
         HELPERS  --  MENU ROUTER  -->  chooses mode & rules, loops gameplay, then sends to post-game actions
     ============================================================================================================
-        ✦ flow
-            • "main"  →  pick mode  →  pick rules  →  start the right game path
-            • when a game path ends  -->  switch to "post" menu  ( replay / custom / change / quit )
-        ✦ notes
-            • uses strings contains checks  -->  "so", "solo", "sOLO" all map to solo
-            • preserves solo session summary behavior on exits (only after solo)
 */
 
-async function menuRouter(phaseName = "main") {
+function menuRouter(phaseName = "main") {
     if (phaseName === "main") {    // pre-game flow  -->  pick a mode, then rules for that mode
-        const modeInput = await ask.prompt(messages.menuText("mode"));    // ask for mode  -->  solo / multiplayer / quit
-        const modeClean = (modeInput || "").toLowerCase().trim();    // normalize user text  -->  account for null/empty
+        const modeInput = prompt(messages.menuText("mode"));    // ask for mode  -->  solo / multiplayer / quit
+        const modeClean = (modeInput || "").toLowerCase().trim();    // normalize user text  --> account for null/empty
 
         if (modeInput === null) {    // Cancel on mode menu  -->  exit + (conditionally) solo session summary
             if (gameState.lastGameMode === "solo") {    // only summarize solo sessions when solo was the last mode
                 const summary = messages.statSummary(gameState.sessionScores);    // solo session summary appears after 2+ games
-                if (summary) await ask.alert(summary);    // show when available
+                if (summary) alert(summary);    // show when available
             }
             return outro();    // end or restart from outro
         }
 
         let chosenModeName = "solo";    // fallback/default when user inputs something unexpected
-        switch (true) {    // boolean switch  -->  allows .includes() checks
+        // uses boolean check to switch cases (first true wins like an if/elseif series)
+        switch (true) {    // allows for .includes() checks  -->  allows for faster demo/testing
             case modeClean.includes("so"): { chosenModeName = "solo"; break; }    // solo
             case modeClean.includes("mu"): { chosenModeName = "multi"; break; }    // multiplayer
             case modeClean.includes("q"):  {    // quit
-                if (gameState.lastGameMode === "solo") {
-                    const summary = messages.statSummary(gameState.sessionScores);
-                    if (summary) await ask.alert(summary);
+                if (gameState.lastGameMode === "solo") {    // BUGFIX guard: only show solo summary after solo
+                    const summary = messages.statSummary(gameState.sessionScores);    // optional solo session summary
+                    if (summary) alert(summary);
                 }
                 return outro();
             }
-            default: { /* keep default 'solo' */ }
+            default: { /* stays 'solo' via variable initialization */ }    // unrecognizable input ?  -->  turns into solo game
         }
 
-        const rulesInput = await ask.prompt(messages.menuText("rules", chosenModeName));    // pick rules for that mode
+        const rulesInput = prompt(messages.menuText("rules", chosenModeName));    // pick rules for that mode
         const rulesClean = (rulesInput || "").toLowerCase().trim();    // normalize rules text
+
         if (rulesInput === null) return menuRouter("main");    // back to mode selection
 
-        let chosenRuleName = "classic";    // default rules
+        let chosenRuleName = "classic";    // fallback to default rules
         switch (true) {
-            case rulesClean.includes("cu"): { chosenRuleName = "custom";  break; }
-            case rulesClean.includes("cl"): { chosenRuleName = "classic"; break; }
+            case rulesClean.includes("cu"): { chosenRuleName = "custom";  break; }    // custom
+            case rulesClean.includes("cl"): { chosenRuleName = "classic"; break; }    // classic
             default: { /* keep 'classic' */ }
         }
 
         if (chosenModeName === "solo") {
             // optional solo name stored the same way as multiplayer names
-            const soloNameInput = await ask.prompt(messages.promptGroupSetup("solo"));    // allow solo player to add an optional name
+            const soloNameInput = prompt(messages.promptGroupSetup("solo"));    // allow solo player to add an optional name
             gameState.playerNames = soloNameInput ? [soloNameInput.trim()] : [];    // empty array means anonymous solo player
 
             if (chosenRuleName === "classic") {
@@ -893,41 +709,41 @@ async function menuRouter(phaseName = "main") {
                 config.maxGuesses = classicDefaults.maxGuesses;
                 gameState.lastGameMode = "solo";
                 gameState.lastRounds = classicDefaults.gameRounds;
-                await playGame();    // one classic solo game
+                playGame();    // one classic solo game
             } else {
-                const customLine = await ask.prompt(messages.promptEntryCustomConfig());    // prompts for 3 numbers to use for custom configs
-                if (customLine === null) return menuRouter("main");    // cancelled ?  --> back to the main menu
+                const customLine = prompt(messages.promptEntryCustomConfig());    // prompts for 3 numbers to use for custom configs
+                if (customLine === null) return menuRouter("main");    // cancelled ?  --> send  back to the main menu
                 const parsed = customConfig(customLine);    // clamp numbers
                 config.wordLength = parsed.wordLength;    // apply all
                 config.maxGuesses = parsed.maxGuesses;
                 gameState.lastGameMode = "solo";
                 gameState.lastRounds = parsed.gameRounds;
-                for (let n = 1; n <= parsed.gameRounds; n++) await playGame();    // series of solo games
+                for (let n = 1; n <= parsed.gameRounds; n++) playGame();    // series of solo games (count specified in custom config)
             }
         } else {
-            // multiplayer path
+            // multiplayer
             gameState.lastGameMode = "multi";
             if (chosenRuleName === "classic") {
-                config.wordLength = classicDefaults.wordLength;
+                config.wordLength = classicDefaults.wordLength;    // classic multi
                 config.maxGuesses = classicDefaults.maxGuesses;
                 gameState.lastRounds = classicDefaults.gameRounds;
-                await playGameMulti({ priorWordLength: config.wordLength, priorMaxGuesses: config.maxGuesses, priorRounds: gameState.lastRounds });    // fast path
+                playGameMulti({ priorWordLength: config.wordLength, priorMaxGuesses: config.maxGuesses, priorRounds: gameState.lastRounds });    // fast path  -->  skip prompt for custom configs
             } else {
-                await playGameMulti();    // custom path handled inside multi flow
+                playGameMulti();    // custom path handled inside multi game flow
             }
         }
 
         return menuRouter("post");    // post-game loop starts after any game path finishes
     }
 
-    // POST phase  -->  replay / custom / change mode / quit ; defaults to replay
-    const postInput = await ask.prompt(messages.menuText("post"));    // request next steps
+    // post phase  -->  replay / custom / change mode / quit ; defaults to replay
+    const postInput = prompt(messages.menuText("post"));    // request next steps
     const postClean = (postInput || "").toLowerCase().trim();    // normalized
 
     if (postInput === null) {    // cancelled at post menu  -->  (conditionally) show solo summary then exit
-        if (gameState.lastGameMode === "solo") {    // guard: never show solo summary after a multi series
+        if (gameState.lastGameMode === "solo") {    // BUGFIX guard: never show solo summary after a multi series
             const summary = messages.statSummary(gameState.sessionScores);    // solo session summary
-            if (summary) await ask.alert(summary);
+            if (summary) alert(summary);
         }
         return outro();
     }
@@ -935,24 +751,24 @@ async function menuRouter(phaseName = "main") {
     switch (true) {
         case postClean.includes("re"): {    // replay same mode/configs
             if (gameState.lastGameMode === "solo") {
-                for (let n = 1; n <= gameState.lastRounds; n++) await playGame();    // repeat last solo series
+                for (let n = 1; n <= gameState.lastRounds; n++) playGame();    // repeat last solo series
             } else {
-                if (gameState.lastMultiplayerSetup) await playGameMulti(gameState.lastMultiplayerSetup);    // repeat last multi setup
-                else await playGameMulti();    // no snapshot yet  -->  prompt inside
+                if (gameState.lastMultiplayerSetup) playGameMulti(gameState.lastMultiplayerSetup);    // repeat last multi setup
+                else playGameMulti();    // no last game configs snapshot  -->  prompt for optional custom
             }
             break;
         }
         case postClean.includes("cu"): {    // change configs (same mode)
             if (gameState.lastGameMode === "solo") {
-                const customLine = await ask.prompt(messages.promptEntryCustomConfig());    // new settings
+                const customLine = prompt(messages.promptEntryCustomConfig());    // new settings
                 if (customLine === null) return menuRouter("post");
                 const parsed = customConfig(customLine);
                 config.wordLength = parsed.wordLength;
                 config.maxGuesses = parsed.maxGuesses;
                 gameState.lastRounds = parsed.gameRounds;
-                for (let n = 1; n <= parsed.gameRounds; n++) await playGame();
+                for (let n = 1; n <= parsed.gameRounds; n++) playGame();
             } else {
-                await playGameMulti();    // multiplayer prompts internally
+                playGameMulti();    // multiplayer prompts internally
             }
             break;
         }
@@ -960,24 +776,24 @@ async function menuRouter(phaseName = "main") {
             return menuRouter("main");
         }
         case postClean.includes("q"): {    // quit
-            if (gameState.lastGameMode === "solo") {
-                const summary = messages.statSummary(gameState.sessionScores);
-                if (summary) await ask.alert(summary);
+            if (gameState.lastGameMode === "solo") {    // BUGFIX guard: only show solo summary after solo
+                const summary = messages.statSummary(gameState.sessionScores);    // game summary if any
+                if (summary) alert(summary);
             }
             return outro();
         }
         default: {    // default to replay
             if (gameState.lastGameMode === "solo") {
-                for (let n = 1; n <= gameState.lastRounds; n++) await playGame();
+                for (let n = 1; n <= gameState.lastRounds; n++) playGame();
             } else {
-                if (gameState.lastMultiplayerSetup) await playGameMulti(gameState.lastMultiplayerSetup);
-                else await playGameMulti();
+                if (gameState.lastMultiplayerSetup) playGameMulti(gameState.lastMultiplayerSetup);
+                else playGameMulti();
             }
             break;
         }
     }
 
-    return menuRouter("post");    // stay in post loop for repeated play / change / quit
+    return menuRouter("post");    // stay in post loop for repeated play / change / quit  ;  accumulates game histories of the same game mode
 }
 
 
@@ -991,13 +807,14 @@ async function menuRouter(phaseName = "main") {
             2)  pick target word ; loop prompts  →  validate  →  score  →  track
             3)  end message + reveal + summary ; store solo session totals
 */
-async function playGame() {
+
+function playGame() {
     // reset per-game fields
     gameState.status = "playing";    // fresh state  -->  new round
     gameState.attempts = [];    // clear board empty the array
     gameState.remaining = config.maxGuesses;    // reset countdown to match current game rules
 
-    await ask.alert(messages.rulesInfo());    // dynamic rules display  -->  uses config values
+    alert(messages.rulesInfo());    // dynamic rules display  -->  uses config values
 
     // pick target (avoid repeats when possible)
     const gameWordObj = pickAWord(activeDictionary);    // select {word, definition}  -->  verifies safe game word length
@@ -1007,17 +824,17 @@ async function playGame() {
     // main loop
     while (gameState.status === "playing") {
         const boardText = displayGuess();    // snapshot of current board  -->  helps with guessing
-        const guessLine = await ask.prompt(messages.promptGuess(gameState.playerNames[0] || null, boardText));    // solo player may have picked a display name
+        const guessLine = prompt(messages.promptGuess(gameState.playerNames[0] || null, boardText));    // solo player may have picked a display name
         let cleanGuess = null;    // will hold validated guess
 
-        if (guessLine !== null) cleanGuess = await validateGuess(guessLine, boardText);    // recursion keeps the same board for invalid inputs
+        if (guessLine !== null) cleanGuess = validateGuess(guessLine, boardText);    // recursion keeps the same board for invalid inputs
 
         if (guessLine === null || cleanGuess === null) {    // cancel ?  -->  confirm with user
-            const continueYes = await ask.confirm(messages.endGame);    // gives a second chance
+            const continueYes = confirm(messages.endGame);    // gives a second chance
             if (continueYes) continue;    // no penalty  -->  skip the rest of this loop
             gameState.status = "quit";    // else  -->  record quit  (affects scoring)
             gameState.remainingAtQuit = gameState.remaining;    // size of penalty (mirrors bonus)
-            gameState.remaining = 0;    // prevent phantom points
+            gameState.remaining = 0;    // keep math stable downstream (was having phantom points issue when using approach of chnaging to negative to calculate penalty)
             break;    // leave loop
         }
 
@@ -1051,19 +868,19 @@ async function playGame() {
 
     // reveal + end message
     if (gameState.status === "won") {
-        await ask.alert(
+        alert(
             messages.outcomeText("won", { guessesUsed: config.maxGuesses - gameState.remaining }) +    // “solved in X attempts”
             "\n\n" + `${messages.showGameWord ? messages.showGameWord(gameWordObj) : `The game word was:   ${gameWordObj.word.toUpperCase()}\nDefinition:   ${gameWordObj.definition}`}` + 
             "\n\n" + messages.statSummary(finalRoundScore) + cumulativeLine
         );
     } else if (gameState.status === "lost") {
-        await ask.alert(
+        alert(
             messages.outcomeText("lost", {}) + "\n\n" +
             `${messages.showGameWord ? messages.showGameWord(gameWordObj) : `The game word was:   ${gameWordObj.word.toUpperCase()}\nDefinition:   ${gameWordObj.definition}`}` +
             "\n\n" + messages.statSummary(finalRoundScore) + cumulativeLine
         );
     } else {
-        await ask.alert(
+        alert(
             messages.outcomeText("quit", {}) + "\n\n" +
             `${messages.showGameWord ? messages.showGameWord(gameWordObj) : `The game word was:   ${gameWordObj.word.toUpperCase()}\nDefinition:   ${gameWordObj.definition}`}` +
             "\n\n" + messages.statSummary(finalRoundScore) + cumulativeLine
@@ -1072,8 +889,8 @@ async function playGame() {
 
     // if menuRouter launched the game, control returns there ; otherwise here's a basic replay prompt (from MVP)
     if (typeof gameState.lastGameMode === "undefined") {
-        const playAgainYes = await ask.confirm(messages.endGame);    // basic replay confirm
-        if (playAgainYes) await playGame(); else await outro();
+        const playAgainYes = confirm(messages.endGame);    // basic replay confirm
+        if (playAgainYes) playGame(); else outro();
     }
 }
 
@@ -1083,185 +900,162 @@ async function playGame() {
 /*  ============================================================================================================
         PLAY GAME  -->  MULTIPLAYER  --  series play using closure, shared calculators, and per-player state
     ============================================================================================================
-        ✦ loop shape
-            1) setup players (count + optional names) and difficulty (classic or custom)
-                • OOP-ish  -->  each playerState is an object with clear properties (name, attempts, status…)
-            2) for each game in the series:
-                → each player gets a unique secret word
-                → round-robin turns until *everyone* is finished (won / lost / quit)
-                → show mid-cycle standings after each full guess cycle
-                → reveal answers for this game
-                → aggregate series stats (per player)
-            3) after the series:
-                → show series leaderboard + highlights
-                → optionally show “ALL GAMES” cumulative board (across replays)
-        ✦ closure
+        ✦ how CLOSURE is used  -->
             • takeTurnFor(...) is defined inside playGameMulti(...)
                 → it can 'see' config, gameIndex, messages, and helpers without passing them as parameters each time
                 → captures access (closure) from the lexical scope
             • when takeTurnFor recurses (on retry), it still uses the same remembered outer variables
                 → behavior + calculations stay stable
-            • tiny 'swap trick'  ->  makes solo play calculators reusable in multi mode by temporarily pointing gameState at a player’s board
-                → avoids needing to create extra globals / parameter lists
+            • avoids needing to create extra globals / parameter lists
+
+        ✦ design style  -->
+            • OOP-ish  -->  each playerState is an object with clear properties (name, attempts, status…)
+                → easy to inspect mid-game.
+            • FP-ish  -->  calculators (computeUserScore, computeGameStats, emojiGuessPoints) behave like pure functions  -->  inputs → outputs
+            • tiny 'swap trick'  ->  makes solo calculators reusable in multi mode by temporarily pointing gameState at a player’s board
 */
 
+function playGameMulti(previousSetupInfo) {
+    gameState.multiAllTotals = gameState.multiAllTotals || {};    // build cumulative store when needed (used by replays)
+    const hadAnyReplays = Object.keys(gameState.multiAllTotals).length > 0;    // history check  -->  used for “ALL GAMES” stat recaps
 
-async function playGameMulti(previousSetupInfo) {
-    gameState.multiAllTotals = gameState.multiAllTotals || {};    // cumulative store across replays (built once)
-    const hadAnyReplays = Object.keys(gameState.multiAllTotals).length > 0;     // use to decide if “ALL GAMES” board appears later
-
-    /* ---------- replay support (skip prompts) ---------- */
+    // restore difficulty on replay (skip custom config prompt)
     if (previousSetupInfo && typeof previousSetupInfo.priorWordLength === "number" && typeof previousSetupInfo.priorMaxGuesses === "number") {
-        config.wordLength = previousSetupInfo.priorWordLength;    // carry forward difficulty
-        config.maxGuesses = previousSetupInfo.priorMaxGuesses;
-        gameState.lastRounds = previousSetupInfo.priorRounds || 1;    // ensure at least one game
+        config.wordLength = previousSetupInfo.priorWordLength;    // carry length forward to this game
+        config.maxGuesses = previousSetupInfo.priorMaxGuesses;    // carry allowed guess count forward to this game
+        gameState.lastRounds = previousSetupInfo.priorRounds || 1;    // ensure at least 1 game round
     }
 
-    /* ---------- player count + optional names ---------- */
-    let playersCount = previousSetupInfo?.playersCount || null;    // skip if provided by replay
-    let playerNames  = previousSetupInfo?.playerNames  || null;
+    // optional appending lines  --> includes field only when the left side of  ?  is not null/undefined ; otherwise nothing to add
+    // force null forces if applicatble so later player checks behave predictably
+    let playersCount = previousSetupInfo?.playersCount || null;    // replay may set this already
+    let playerNames = previousSetupInfo?.playerNames || null;    // replay may set names too
 
-    if (!playersCount) {   // fresh setup
-        const playersPrompt = await ask.prompt(messages.promptGroupSetup("multi"));    // ex: "3 yes"
-        if (playersPrompt === null) return;    // exit cleanly back to menu
-
-        const cleanedPlayers    = (playersPrompt || "").toString().trim().toLowerCase();
-        const wantsCustomNames  = /\b(yes|y|name|names)\b/.test(cleanedPlayers); // detects naming step
-        playersCount            = parseInt(cleanedPlayers, 10);    // base-10 number parse
-
-        if (!Number.isFinite(playersCount) || playersCount < 2) {    // guard → needs at least two players
-            await ask.alert(messages.needMorePlayers);
+    // fresh multiplayer setup (when not coming from a replay snapshot)
+    if (!playersCount) {
+        const playersPrompt = prompt(messages.promptGroupSetup("multi"));    // expected pattern  --> "3 yes"
+        if (playersPrompt === null) return;    // clean exit if canceled (back to menu)
+        const cleanedPlayers = (playersPrompt || "").toString().trim().toLowerCase();    // normalize the input string
+        const wantsCustomNames = /\b(yes|y|name|names)\b/.test(cleanedPlayers);    // boolen  -->  detect if players want custom names
+        playersCount = parseInt(cleanedPlayers, 10);    // save number as based-10 int
+        if (!Number.isFinite(playersCount) || playersCount < 2) {    // guard  --> make sure at least 2 players
+            alert(messages.needMorePlayers);
             return;
         }
-
-        if (wantsCustomNames) {    // optional naming pass
-            const namesLine = await ask.prompt(messages.promptGroupSetup("multi", playersCount));
-            if (namesLine !== null) {
-                const parsedNames = (namesLine || "")
-                    .split(/[,\s]+/)    // comma or whitespace separated
-                    .map(nameText => nameText.trim())
-                    .filter(Boolean);
-                while (parsedNames.length < playersCount) parsedNames.push(`Player  ${parsedNames.length + 1}`); // fill missing
-                playerNames = parsedNames.slice(0, playersCount);    // clamp extra names if any
-            }
+        if (wantsCustomNames) {
+            const namesLine = prompt(messages.promptGroupSetup("multi", playersCount));    // name prompt that uses the count for the text
+            if (namesLine === null) return;    // canceled naming step, skip and continue with generic/anonymous 'Payer1', 'Player 2', etc.
+            const parsedNames = (namesLine || "")
+                .split(/[,\s]+/)    // split by comma / spaces
+                .map(nameText => nameText.trim())    // trim whitespace from each element
+                .filter(Boolean);    // remove empty elements
+            while (parsedNames.length < playersCount) parsedNames.push(`Player  ${parsedNames.length + 1}`);    // fill in missing entries with anon names
+            playerNames = parsedNames.slice(0, playersCount);    // clamp if there were extra player names than actual players
         }
     }
 
-    /* ---------- difficulty (classic vs custom) ---------- */
-    if (!previousSetupInfo) {    // only ask when not replaying
-        const customLine = await ask.prompt(
-            messages.promptEntryCustomConfig() + "\n( Press  Cancel  or leave  blank  to keep classic multiplayer settings. )\n"
-        );
+    // ask difficulty only when not replaying a saved setup
+    if (!previousSetupInfo) {
+        const customLine = prompt(messages.promptEntryCustomConfig() + "\n( Press  Cancel  or leave  blank  to keep classic multiplayer settings. )\n");
         if (customLine && customLine.trim().length > 0) {
-            const parsed = customConfig(customLine);    // parse 3 numbers flexibly
+            const parsed = customConfig(customLine);    // get numbers
             config.wordLength = parsed.wordLength;    // apply
             config.maxGuesses = parsed.maxGuesses;
             gameState.lastRounds = parsed.gameRounds;
         } else {
-            config.wordLength = classicDefaults.wordLength;    // classic defaults
+            config.wordLength = classicDefaults.wordLength;    // classic default
             config.maxGuesses = classicDefaults.maxGuesses;
-            gameState.lastRounds = gameState.lastRounds || classicDefaults.gameRounds;
+            gameState.lastRounds = gameState.lastRounds || classicDefaults.gameRounds;    // keep last setup or 1
         }
     }
 
-    /* ---------- show rules (dynamic from config) ---------- */
-    await ask.alert(messages.rulesInfo());
+    alert(messages.rulesInfo());    // show current rules (dynamic)
 
-    /* ---------- remember last setup for quick replays ---------- */
-    gameState.lastGameMode = "multi";
-    gameState.lastMultiplayerSetup = {
+    gameState.lastGameMode = "multi";    // record mode
+    gameState.lastMultiplayerSetup = {    // store snapshot for replay
         playersCount,
         playerNames,
         priorWordLength: config.wordLength,
         priorMaxGuesses: config.maxGuesses,
         priorRounds: gameState.lastRounds
     };
-    gameState.playerNames = Array.isArray(playerNames) ? playerNames.slice() : [];   // store names for displays
+    gameState.playerNames = Array.isArray(playerNames) ? playerNames.slice() : [];    // shared naming key with solo
 
     const seriesTotals = {};    // per-name aggregation for this series only
 
-
-    /* =========================================
-            SERIES LOOP  (gameIndex: 1..N)
-       ========================================= */
+    // series loop
     for (let gameIndex = 1; gameIndex <= gameState.lastRounds; gameIndex++) {
-
-        /* ---------- per-game per-player state ---------- */
+        // per-game per-player state
         const playerStateList = Array.from({ length: playersCount }, (_, indexNum) => {
-            const chosenWord = pickAWord(activeDictionary);    // personal secret for this player
-            if (!gameState.history.includes(chosenWord.word)) gameState.history.push(chosenWord.word); // reduce repeats globally
+            const chosenWord = pickAWord(activeDictionary);    // get {word, definition}
+            if (!gameState.history.includes(chosenWord.word)) gameState.history.push(chosenWord.word);    // record in global history
 
             return {
-                name: (playerNames && playerNames[indexNum]) ? playerNames[indexNum] : `Player  ${indexNum + 1}`,  // label for prompts + boards
-                targetWord: chosenWord,    // { word, definition }
-                attempts: [],    // [ [guess, [emojiRow]], ... ]
-                roundPoints: [],    // per-guess numeric scores (for best/worst/avg)
-                status: "playing",    // "playing" | "won" | "lost" | "quit"
-                remaining: config.maxGuesses,    // countdown per player
-                remainingAtQuit: 0,    // stored for penalty math
-                wasSkipAlertShown: false,    // avoid duplicate “skipping turns” alerts
+                name: (playerNames && playerNames[indexNum]) ? playerNames[indexNum] : `Player  ${indexNum + 1}`,    // fallback naming
+                targetWord: chosenWord,    // personal secret word
+                attempts: [],    // their board
+                roundPoints: [],    // per-guess points
+                status: "playing",    // playing | won | lost | quit
+                remaining: config.maxGuesses,    // countdown
+                remainingAtQuit: 0,    // penalty size if quitting
+                wasSkipAlertShown: false,    // avoid duplicate skip notices
             };
         });
 
-        /* ---------- closure  -->  1 full attempt for a specific player ---------- */
-        async function takeTurnFor(playerState) {
-            const boardNow = displayGuess(playerState.attempts);    // board snapshot for current player
-            const guessLine = await ask.prompt(messages.promptGuess(playerState.name, boardNow)); // per-turn banner
+        // CLOSURE  -->  inner function captures config, messages, gameIndex, activeDictionary, and helpers then plays 1 attempt for the current player
+        function takeTurnFor(playerState) {
+            const boardNow = displayGuess(playerState.attempts);    // board for this player
+            const guessLine = prompt(messages.promptGuess(playerState.name, boardNow));    // turn banner
             let cleanGuess = null;
 
-            if (guessLine !== null) cleanGuess = await validateGuess(guessLine, boardNow); // keeps same board during retries
+            if (guessLine !== null) cleanGuess = validateGuess(guessLine, boardNow);    // recursion inside validator
 
-            if (guessLine === null || cleanGuess === null) {    // cancel path → confirm → maybe quit
-                const continueYes = await ask.confirm(messages.endGame);
-                if (continueYes) return await takeTurnFor(playerState);    // recursion: retry this same turn
+            if (guessLine === null || cleanGuess === null) {    // cancelled ?
+                const continueYes = confirm(messages.endGame);    // second chance
+                if (continueYes) return takeTurnFor(playerState);    // retry same turn (recursion)
                 playerState.status = "quit";    // lock quit
-                playerState.remainingAtQuit = playerState.remaining;    // store penalty size (mirrors bonus)
-                playerState.remaining = 0;    // stabilize math downstream
-                return;    // end this player's turn
+                playerState.remainingAtQuit = playerState.remaining;    // store penalty size
+                playerState.remaining = 0;    // stabilize totals
+                return;    // end this player’s turn
             }
 
-            // score current guess vs this player's secret
-            const [guessWordNow, emojiRowNow] = scoreGuess(cleanGuess, playerState.targetWord.word);
-            playerState.attempts.push([guessWordNow, emojiRowNow]);    // add row to their board
-            playerState.remaining -= 1;    // consume one attempt
+            const [guessWordNow, emojiRowNow] = scoreGuess(cleanGuess, playerState.targetWord.word);    // score against their secret
+            playerState.attempts.push([guessWordNow, emojiRowNow]);    // record row
+            playerState.remaining -= 1;    // reduce guess attempts
 
-            // check end conditions for this player
-            if (emojiRowNow.every(mark => mark === config.emojis.correct)) playerState.status = "won";
-            else if (playerState.remaining === 0) playerState.status = "lost";
+            if (emojiRowNow.every(mark => mark === config.emojis.correct)) playerState.status = "won";    // player solved
+            else if (playerState.remaining === 0) playerState.status = "lost";    // player out of tries
 
-            // per-guess numeric points (for best/worst + per-turn explain)
-            const { points, counts } = emojiGuessPoints(emojiRowNow);
-            playerState.roundPoints.push(points);
+            const { points, counts } = emojiGuessPoints(emojiRowNow);    // per-guess numbers
+            playerState.roundPoints.push(points);    // save for best/worst attempt across game/series
 
-            // reuse solo scorer via swap trick (points so far, with/without bonus)
-            const savedAttempts  = gameState.attempts;
-            const savedRemaining = gameState.remaining;
-            gameState.attempts   = playerState.attempts;
-            gameState.remaining  = playerState.remaining;
-            const runningNoBonus   = computeUserScore(false).totalPoints;    // subtotal
-            const runningWithBonus = computeUserScore(true).totalPoints;    // if finished, includes locked bonus
-            gameState.attempts   = savedAttempts;
-            gameState.remaining  = savedRemaining;
+            // swap trick to reuse solo scorer from MVP on this player's data
+            const savedAttempts = gameState.attempts;    // stash global board
+            const savedRemaining = gameState.remaining;    // stash remaining
+            gameState.attempts = playerState.attempts;    // point scorer at player
+            gameState.remaining = playerState.remaining;    // keep consistent
+            const runningNoBonus = computeUserScore(false).totalPoints;    // subtotal (no bonus)
+            const runningWithBonus = computeUserScore(true).totalPoints;    // with bonus (if finished)
+            gameState.attempts = savedAttempts;    // restore
+            gameState.remaining = savedRemaining;    // restore
 
-            // bonus messaging (show "Bonus: +" only on the winning turn)
-            const didJustWin       = (playerState.status === "won");
-            const bonusThisTurn    = didJustWin ? playerState.remaining * config.wordLength * config.pointsValue.correct : 0;
+            const didJustWin = (playerState.status === "won");    // only turns true on the winning guess
+            const bonusThisTurn = didJustWin ? playerState.remaining * config.wordLength * config.pointsValue.correct : 0;    // lock-in bonus at current win moment
             const bonusLockedSoFar = (playerState.status !== "playing")
-                ? Math.max(0, runningWithBonus - runningNoBonus)    // after done, show exact locked bonus
+                ? Math.max(0, runningWithBonus - runningNoBonus)    // show only after done (never negative)
                 : 0;
 
-            // cross-replay running totals (only when there is prior history)
-            const priorAll       = (gameState.multiAllTotals[playerState.name]?.totalAcrossGames) || 0;
-            const priorBonusAll  = (gameState.multiAllTotals[playerState.name]?.bonusAcrossGames) || 0;
-            const runningAllOrNull   = hadAnyReplays
+            // optional cross-replay running totals
+            const priorAll = (gameState.multiAllTotals[playerState.name]?.totalAcrossGames) || 0;
+            const priorBonusAll = (gameState.multiAllTotals[playerState.name]?.bonusAcrossGames) || 0;
+            const runningAllOrNull = hadAnyReplays
                 ? priorAll + (playerState.status === "won" ? runningWithBonus : runningNoBonus)
                 : null;
-            const seriesBonusSoFar   = hadAnyReplays
+            const seriesBonusSoFar = hadAnyReplays
                 ? priorBonusAll + (playerState.status !== "playing" ? bonusLockedSoFar : 0)
                 : 0;
 
-            // friendly per-turn explain window (teaches scoring live)
-            const roundNow = Math.max(1, playerState.attempts.length);    // 1-based human label
+            const roundNow = Math.max(1, playerState.attempts.length);    // guard against dividing by 0
             const explain = messages.roundExplain(
                 playerState.name, roundNow, config.maxGuesses,
                 guessWordNow, emojiRowNow, points,
@@ -1269,11 +1063,11 @@ async function playGameMulti(previousSetupInfo) {
                 runningNoBonus, gameIndex,
                 bonusThisTurn, bonusLockedSoFar, runningAllOrNull, seriesBonusSoFar
             );
-            await ask.alert(explain);
+
+            alert(explain);    // per-turn learning window
         }
 
-
-        /* ---------- round-robin loop until everyone is finished ---------- */
+        // round-robin turns until all players are finished
         let guessCycleCount = 0;
         while (playerStateList.some(p => p.status === "playing")) {    // .some stops early on first true
             guessCycleCount++;
@@ -1299,14 +1093,14 @@ async function playGameMulti(previousSetupInfo) {
                             const priorBonusSkip = (gameState.multiAllTotals[onePlayer.name]?.bonusAcrossGames) || 0;
                             const runningWithCurrentGame = priorAllSkip + totalWithBonus;
                             const runningBonusWithCurrent = priorBonusSkip + lockedBonus;
-                            await ask.alert(messages.solvedSkipNotice(onePlayer.name, totalWithBonus, lockedBonus, hadAnyReplays, runningWithCurrentGame, runningBonusWithCurrent));
+                            alert(messages.solvedSkipNotice(onePlayer.name, totalWithBonus, lockedBonus, hadAnyReplays, runningWithCurrentGame, runningBonusWithCurrent));
                         } else {
                             const penalty = (onePlayer.remainingAtQuit || 0) * config.wordLength * config.pointsValue.correct;    // mirrors bonus size
                             const priorAllQuit = (gameState.multiAllTotals[onePlayer.name]?.totalAcrossGames) || 0;    // prior points across replays
                             const priorPenaltyQuit = (gameState.multiAllTotals[onePlayer.name]?.penaltyAcrossGames) || 0;    // prior penalty across replays
                             const runningAllWithPenalty = priorAllQuit + (totalNoBonus - penalty);    // updated overall total including this penalty
                             const runningPenaltyWithCurrent = priorPenaltyQuit + penalty;    // updated overall penalty including this game
-                            await ask.alert(messages.quitSkipNotice(onePlayer.name, totalNoBonus, penalty, hadAnyReplays, runningAllWithPenalty, runningPenaltyWithCurrent));
+                            alert(messages.quitSkipNotice(onePlayer.name, totalNoBonus, penalty, hadAnyReplays, runningAllWithPenalty, runningPenaltyWithCurrent));
                         }
 
                         onePlayer.wasSkipAlertShown = true;    // mute repeat notices
@@ -1314,9 +1108,8 @@ async function playGameMulti(previousSetupInfo) {
                     continue;    // go to next player
                 }
 
-                await takeTurnFor(onePlayer);    // CLOSURE call
+                takeTurnFor(onePlayer);    // CLOSURE call (no need to pass config/gameIndex/messages each time)
             }
-
 
             // mid-cycle standings
             const standingsCycle = computeGameStats(playerStateList, "finishedOnly").standings;
@@ -1327,16 +1120,14 @@ async function playGameMulti(previousSetupInfo) {
                 const meta = metaParts.length ? `    (${metaParts.join(" ; ")})` : "";
                 return `    ${posNum + 1}.   ${row.name}   —   ${row.totalPoints} pts${meta}`;
             }).join("\n");
-            await ask.alert(messages.standingsTitle(gameIndex, guessCycleCount) + lines);
+            alert(messages.standingsTitle(gameIndex, guessCycleCount) + lines);
         }
-
 
         // answers reveal for this game
         const answersText = playerStateList
             .map(p => `    ${p.name}    -->    ${p.targetWord.word.toUpperCase()}    --    ${p.targetWord.definition}`)
             .join("\n\n");
-        await ask.alert(messages.answersTitle(gameIndex) + answersText);
-
+        alert(messages.answersTitle(gameIndex) + answersText);
 
         // series aggregation (per game)
         playerStateList.forEach(p => {
@@ -1381,8 +1172,7 @@ async function playGameMulti(previousSetupInfo) {
         });
     } // end series loop
 
-
-    /* ---------- series summary board (this series only) ---------- */
+    // series summary
     const seriesStandings = Object.entries(seriesTotals)
         .map(([name, info]) => ({ name, totalPoints: info.totalAcrossGames }))
         .sort((a, b) => b.totalPoints - a.totalPoints);
@@ -1394,15 +1184,13 @@ async function playGameMulti(previousSetupInfo) {
             name,
             total: info.totalAcrossGames,
             average,
-            best:  info.bestAttempt  === -Infinity ? 0 : info.bestAttempt,
+            best: info.bestAttempt === -Infinity ? 0 : info.bestAttempt,
             bestAt: 1,
-            worst: info.worstAttempt ===  Infinity ? 0 : info.worstAttempt,
+            worst: info.worstAttempt === Infinity ? 0 : info.worstAttempt,
             worstAt: 1
         };
     });
 
-
-    // highlight cards for quick reading (pick first after sorting copies)
     let leaderSingleGame = null;
     for (const [name, info] of Object.entries(seriesTotals)) {
         if (info.roundTotals.length) {
@@ -1411,10 +1199,11 @@ async function playGameMulti(previousSetupInfo) {
             if (!leaderSingleGame || points > leaderSingleGame.points) leaderSingleGame = { name, points, gameAt };
         }
     }
-    const leaderTotal = seriesRows.slice().sort((a, b) => b.total   - a.total  )[0];
+
+    const leaderTotal = seriesRows.slice().sort((a, b) => b.total - a.total)[0];
     const leaderAvg   = seriesRows.slice().sort((a, b) => b.average - a.average)[0];
-    const leaderBest  = seriesRows.slice().sort((a, b) => b.best    - a.best   )[0];
-    const leaderWorst = seriesRows.slice().sort((a, b) => a.worst   - b.worst  )[0];
+    const leaderBest  = seriesRows.slice().sort((a, b) => b.best - a.best)[0];
+    const leaderWorst = seriesRows.slice().sort((a, b) => a.worst - b.worst)[0];
 
     const seriesEndSummary = {
         scope: "series",
@@ -1425,8 +1214,7 @@ async function playGameMulti(previousSetupInfo) {
         leaderWorst
     };
 
-
-    /* ---------- roll series into ALL-GAMES cumulative store (for future replays) ---------- */
+    // add this finished series into ALL-GAMES cumulative stats (for future replays)
     Object.entries(seriesTotals).forEach(([name, info]) => {
         if (!gameState.multiAllTotals[name]) {
             gameState.multiAllTotals[name] = {
@@ -1440,14 +1228,13 @@ async function playGameMulti(previousSetupInfo) {
         }
         gameState.multiAllTotals[name].totalAcrossGames += info.totalAcrossGames;
         gameState.multiAllTotals[name].roundTotals.push(...info.roundTotals);
-        gameState.multiAllTotals[name].bestAttempt  = Math.max(gameState.multiAllTotals[name].bestAttempt,  info.bestAttempt);
+        gameState.multiAllTotals[name].bestAttempt = Math.max(gameState.multiAllTotals[name].bestAttempt, info.bestAttempt);
         gameState.multiAllTotals[name].worstAttempt = Math.min(gameState.multiAllTotals[name].worstAttempt, info.worstAttempt);
-        gameState.multiAllTotals[name].bonusAcrossGames   += (info.bonusAcrossGames   || 0);
+        gameState.multiAllTotals[name].bonusAcrossGames += (info.bonusAcrossGames || 0);
         gameState.multiAllTotals[name].penaltyAcrossGames += (info.penaltyAcrossGames || 0);
     });
 
-
-    /* ---------- ALL-GAMES cumulative board (only when prior history exists) ---------- */
+    // ALL-GAMES cumulative board (across replays)
     const overallStandings = Object.entries(gameState.multiAllTotals)
         .map(([name, info]) => ({ name, totalPoints: info.totalAcrossGames }))
         .sort((a, b) => b.totalPoints - a.totalPoints);
@@ -1459,9 +1246,9 @@ async function playGameMulti(previousSetupInfo) {
             name,
             total: info.totalAcrossGames,
             average,
-            best:  info.bestAttempt  === -Infinity ? 0 : info.bestAttempt,
+            best: info.bestAttempt === -Infinity ? 0 : info.bestAttempt,
             bestAt: 1,
-            worst: info.worstAttempt ===  Infinity ? 0 : info.worstAttempt,
+            worst: info.worstAttempt === Infinity ? 0 : info.worstAttempt,
             worstAt: 1
         };
     });
@@ -1474,28 +1261,29 @@ async function playGameMulti(previousSetupInfo) {
             if (!overallSingleGame || points > overallSingleGame.points) overallSingleGame = { name, points, gameAt };
         }
     }
+
     const overallLeaderAvg   = overallRows.slice().sort((a, b) => b.average - a.average)[0];
-    const overallLeaderBest  = overallRows.slice().sort((a, b) => b.best    - a.best   )[0];
-    const overallLeaderWorst = overallRows.slice().sort((a, b) => a.worst   - b.worst  )[0];
+    const overallLeaderBest  = overallRows.slice().sort((a, b) => b.best - a.best)[0];
+    const overallLeaderWorst = overallRows.slice().sort((a, b) => a.worst - b.worst)[0];
 
     const overallEndSummary = {
         scope: "series",
         standings: overallStandings,
         leaderSingleGame: overallSingleGame,
-        leaderAvg:  overallLeaderAvg,
+        leaderAvg: overallLeaderAvg,
         leaderBest: overallLeaderBest,
         leaderWorst: overallLeaderWorst
     };
 
-    /* ---------- end-of-series displays ---------- */
-    await ask.alert(
+    // show this series first
+    alert(
         messages.seriesTitle(gameState.lastRounds) +
         `Leaderboard  (this series):\n` +
         seriesStandings.map((row, pos) => {
-            const bonusAcross   = seriesTotals[row.name]?.bonusAcrossGames   || 0;
+            const bonusAcross = seriesTotals[row.name]?.bonusAcrossGames || 0;
             const penaltyAcross = seriesTotals[row.name]?.penaltyAcrossGames || 0;
             const tags = [];
-            if (bonusAcross   > 0) tags.push(`incl.  ${bonusAcross}  bonus`);
+            if (bonusAcross > 0) tags.push(`incl.  ${bonusAcross}  bonus`);
             if (penaltyAcross > 0) tags.push(`- ${penaltyAcross}  penalty`);
             const note = tags.length ? `   ( ${tags.join(" ; ")} )` : "";
             return `    ${pos + 1}.   ${row.name}  —  ${row.totalPoints}  points${note}`;
@@ -1503,14 +1291,15 @@ async function playGameMulti(previousSetupInfo) {
         `\n\n` + messages.statSummary(seriesEndSummary)
     );
 
+    // then show cumulative across all replays (only if there was prior history before this series started)
     if (hadAnyReplays) {
-        await ask.alert(
+        alert(
             messages.cumulativeTitle() +
             overallStandings.map((row, pos) => {
-                const bonusAcross   = gameState.multiAllTotals[row.name]?.bonusAcrossGames   || 0;
+                const bonusAcross = gameState.multiAllTotals[row.name]?.bonusAcrossGames || 0;
                 const penaltyAcross = gameState.multiAllTotals[row.name]?.penaltyAcrossGames || 0;
                 const tags = [];
-                if (bonusAcross   > 0) tags.push(`incl.  ${bonusAcross}  bonus`);
+                if (bonusAcross > 0) tags.push(`incl.  ${bonusAcross}  bonus`);
                 if (penaltyAcross > 0) tags.push(`- ${penaltyAcross}  penalty`);
                 const note = tags.length ? `   ( ${tags.join(" ; ")} )` : "";
                 return `    ${pos + 1}.   ${row.name}  —  ${row.totalPoints}  points${note}`;

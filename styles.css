@@ -1,0 +1,260 @@
+/* ============================================
+    Leafy Sea Dragons'  --  Word Puzzle
+        mobile-first, embed-friendly
+   ============================================ */
+
+
+   /* -------- CSS reset -------- */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+* {
+    margin: 0;
+}
+
+html,
+body {
+    height: 100%;
+}
+
+img,
+svg,
+video,
+canvas {
+    display: block;
+    max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+
+/* -------- theme (light mode default) -------- */
+:root {
+    --bg: #0a0a0a;
+    --panel: #13141a;
+    --panel-2: #0f1117;
+    --text: #f2f4f8;
+    --muted: #aab2c0;
+    --accent: #00c8ff;
+    --accent-2: #09a57c;
+    --warn: #ff7a70;
+    --ring: #2a3342;
+    --shadow: 0 12px 40px rgba(0, 0, 0, .35);
+    --radius: 14px;
+
+    --font-stack: system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+    --pad: clamp(12px, 2.8vw, 22px);
+    --pad-sm: clamp(8px, 1.8vw, 16px);
+    --maxw: 920px;
+}
+
+
+/* -------- base layout -------- */
+html,
+body {
+    background: radial-gradient(1200px 600px at 50% -50%, #10304a 0%, transparent 60%) no-repeat,
+        var(--bg);
+    color: var(--text);
+    font-family: var(--font-stack);
+    line-height: 1.6;
+}
+
+.site-head,
+.site-foot {
+    padding: var(--pad);
+    text-align: center;
+}
+
+.title {
+    font-size: clamp(1.15rem, 4.6vw, 2rem);
+    font-weight: 800;
+    letter-spacing: .02em;
+}
+
+.subtitle {
+    opacity: .85;
+    font-size: clamp(.9rem, 3.6vw, 1rem);
+}
+
+.app {
+    margin-inline: auto;
+    max-width: var(--maxw);
+    padding: var(--pad);
+}
+
+
+/* -------- utility text -------- */
+.noscript {
+    padding: var(--pad);
+    color: var(--text);
+}
+
+.log-wrap {
+    margin-top: var(--pad-sm);
+}
+
+.log {
+    background: var(--panel-2);
+    border: 1px solid #1e2430;
+    border-radius: var(--radius);
+    padding: var(--pad-sm);
+    font-family: var(--mono);
+    white-space: pre-wrap;
+    box-shadow: var(--shadow);
+}
+
+
+/* -------- buttons -------- */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+    padding: .65rem 1rem;
+    border-radius: 10px;
+    background: linear-gradient(0deg, #0a2737, #0f2f44);
+    color: #e7f5ff;
+    border: 1px solid #1e3a50;
+    cursor: pointer;
+    transition: transform .08s ease, box-shadow .18s ease, background .18s ease;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .25);
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .28);
+}
+
+.btn:active {
+    transform: translateY(0);
+}
+
+.btn:focus-visible {
+    outline: 3px solid #1a89c9;
+    outline-offset: 2px;
+}
+
+.btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px dashed #31435a;
+}
+
+.btn-warn {
+    background: linear-gradient(0deg, #3a1212, #4c1010);
+    border: 1px solid #5f1d1d;
+    color: #ffeaea;
+}
+
+.controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .6rem;
+    margin-top: var(--pad);
+}
+
+
+/* -------- modal  -->  in-iframe dialogs -------- */
+.ui-modal[hidden] {
+    display: none;
+}
+
+.ui-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .5);
+    display: grid;
+    place-items: center;
+    z-index: 9999;    /* above everything in the iframe */
+    padding: var(--pad);
+}
+
+.ui-modal__box {
+    width: min(92vw, 600px);
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid #1e2430;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: clamp(14px, 3.2vw, 22px);
+}
+
+.ui-modal__title {
+    font-size: clamp(1rem, 4vw, 1.25rem);
+    margin-bottom: .4rem;
+    color: var(--accent);
+    letter-spacing: .02em;
+}
+
+.ui-modal__msg {
+    margin: .6rem 0 .9rem 0;
+    white-space: pre-wrap;
+    min-height: 2.4em;
+}
+
+.ui-modal__form {
+    display: grid;
+    gap: .6rem;
+}
+
+.ui-input {
+    width: 100%;
+    background: #0f1320;
+    color: var(--text);
+    border-radius: 10px;
+    border: 1px solid #1e2430;
+    padding: .7rem .9rem;
+    font-family: var(--mono);
+    letter-spacing: .02em;
+}
+
+.ui-input:focus-visible {
+    outline: 3px solid #1a89c9;
+    outline-offset: 1px;
+}
+
+.ui-modal__actions {
+    display: flex;
+    gap: .5rem;
+    justify-content: flex-end;
+}
+
+/* -------- panels / cards (maybe I'll add more UI later) -------- */
+.card {
+    background: var(--panel);
+    border: 1px solid #1e2430;
+    border-radius: var(--radius);
+    padding: var(--pad);
+    box-shadow: var(--shadow);
+}
+
+
+/* -------- accessibility helpers -------- */
+.sr-only {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+
+/* -------- responsive -------- */
+@media (min-width: 880px) {
+    .controls {
+        gap: .8rem;
+    }
+}
