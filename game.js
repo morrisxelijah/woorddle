@@ -536,13 +536,13 @@ const demoDictionary = [
 // dictionary loader — uses global dictionaryData if present; otherwise the demo list
 let activeDictionary = demoDictionary;
 function resolveDictionary() {
-  try {
-    if (typeof window !== "undefined" && Array.isArray(window.dictionaryData) && window.dictionaryData.length) {
-      activeDictionary = window.dictionaryData;
-    }
-  } catch (_) { /* stay on demo */ }
+    try {
+        if (typeof window !== "undefined" && Array.isArray(window.dictionaryData) && window.dictionaryData.length) {
+          activeDictionary = window.dictionaryData;
+        }
+    } catch (_) { /* stay on demo */ }
 }
-// run once at load; if dictionaryData.js is deferred above, this will see it
+// run once at load  -->  if dictionaryData.js is deferred above, this will see it
 resolveDictionary();
 
 
