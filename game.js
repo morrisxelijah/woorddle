@@ -99,6 +99,12 @@ const ask = (() => {
     let currentResolver = null;    // resolves the current dialog's Promise
     let currentMode = "alert";    // "alert" | "confirm" | "prompt"
     let keyHandler = null;    // reference for ESC handler so we can remove it on close
+    let isOpen = false;
+
+    // block stray double-click/Enter from auto-submitting the next dialog
+    let armed = false;
+    const ARM_MS = 300;  // small delay that absorbs the phantom clicks
+    let armTimer = null;
 
     /* ---------- show modal with a specific mode + text (and optional default) ---------- */
     function open(type, message, defVal = "") {
@@ -115,11 +121,21 @@ const ask = (() => {
         inputEl.style.display   = (type === "prompt") ? "block" : "none";
         cancelBtn.style.display = (type !== "alert")  ? "inline-flex" : "none";
 
-        // reveal + focus management
-        modal.hidden = false;    // display modal overlay
-        setTimeout(() => {    // wait a tick so element is focusable
-        if (type === "prompt") inputEl.focus(); else okBtn.focus();
-        }, 0);
+        // reset controls, reveal, and "arm" a moment later
+        okBtn.disabled = true;
+        cancelBtn.disabled = (type === "alert");
+        formEl.style.pointerEvents = "none";
+        modal.hidden = false;
+        isOpen = true;
+        armed = false;
+        clearTimeout(armTimer);
+        armTimer = setTimeout(() => {
+            armed = true;
+            okBtn.disabled = false;
+            cancelBtn.disabled = (type === "alert");
+            formEl.style.pointerEvents = "auto";
+            if (type === "prompt") inputEl.focus(); else okBtn.focus();
+        }, ARM_MS);
 
         // minimal key support  -->  ESC cancels (matches browser dialogs muscle memory)
         keyHandler = (e) => {
@@ -131,8 +147,10 @@ const ask = (() => {
     /* ---------- hide modal and clean up listeners / transient state ---------- */
     function close() {
         modal.hidden = true;    // hide overlay
+        isOpen = false;
         document.removeEventListener("keydown", keyHandler);    // remove ESC handler
         keyHandler = null;    // release reference
+        armed = false;
     }
 
     /* ---------- resolve helper (single exit for success paths) ---------- */
@@ -143,6 +161,9 @@ const ask = (() => {
 
     /* ---------- user chose 'Cancel' or ESC ---------- */
     function doCancel() {
+        if (!armed) return; // ignore double-click/Enter from previous dialog
+        armed = false;
+        okBtn.disabled = true; cancelBtn.disabled = true; formEl.style.pointerEvents = "none";
         // shape aligns with browser dialogs:
         //   prompt → null, confirm → false, alert → undefined
         if (currentMode === "prompt") resolveNow(null);
@@ -153,6 +174,9 @@ const ask = (() => {
 
     /* ---------- user chose 'OK' (Enter or button) ---------- */
     function doOk() {
+        if (!armed) return; // ignore double-click/Enter from previous dialog
+        armed = false;
+        okBtn.disabled = true; cancelBtn.disabled = true; formEl.style.pointerEvents = "none";
         // shape aligns with browser dialogs:
         //   prompt → string, confirm → true, alert → undefined
         if (currentMode === "prompt") resolveNow(String(inputEl.value).trim());
@@ -162,15 +186,16 @@ const ask = (() => {
     }
 
     /* ---------- wire UI events (submit / buttons) ---------- */
-    formEl.addEventListener("submit", (e) => { e.preventDefault(); doOk(); });  // Enter submits safely
+    formEl.addEventListener("submit", (e) => { e.preventDefault(); doOk(); });  // single path for OK
     cancelBtn.addEventListener("click", doCancel);    // Cancel click → cancel path
-    okBtn.addEventListener("click", doOk);    // OK click → ok path
 
     /* ---------- public API (async) ---------- */
     return {
         alert:  (text)    => new Promise((resolve) => { currentResolver = resolve; open("alert",   text);           }),
         confirm:  (text)    => new Promise((resolve) => { currentResolver = resolve; open("confirm", text);           }),
-        prompt:  (text, defVal = "")  => new Promise((resolve) => { currentResolver = resolve; open("prompt",  text, defVal);  }),
+        prompt: (text, defVal = "") => new Promise((resolve) => { currentResolver = resolve; open("prompt", text, defVal); }),
+
+        get isOpen() { return isOpen; }    // expose a readonly flag so header controls can behave nicely
     };
 })();
 
@@ -269,8 +294,8 @@ const messages = {
         return (
             `Each player has  ${config.maxGuesses}  tries to guess the hidden  ${config.wordLength}-letter word.  ` +
             `After each guess, the emojis below show how accurate the guess letters are:\n\n` +
-            `       ${config.emojis.correct}  ( + ${config.pointsValue.correct} )   -->    right letter in the right spot\n` +
-            `       ${config.emojis.almost}  ( + ${config.pointsValue.almost} )    -->    right letter in the wrong spot\n` +
+            `       ${config.emojis.correct}  ( +${config.pointsValue.correct} )   -->    right letter in the right spot\n` +
+            `       ${config.emojis.almost}  ( +${config.pointsValue.almost} )    -->    right letter in the wrong spot\n` +
             `       ${config.emojis.incorrect}  ( ${config.pointsValue.incorrect} )    -->    letter not in the word\n\n` +
             `bonus           =    remainingAttempts   *   wordLength ( ${config.wordLength} )   *   correctPoints ( ${config.pointsValue.correct} )\n` +
             `quit penalty    =    remainingAttempts   *   wordLength ( ${config.wordLength} )   *   correctPoints ( ${config.pointsValue.correct} )`
@@ -335,8 +360,8 @@ const messages = {
 
     /* ---------------- shared fragments & titles ---------------- */
     legendLine() {
-        return `Legend:\n    correct  =  ${config.emojis.correct}  ( + ${config.pointsValue.correct} )   ` +
-               `almost  =  ${config.emojis.almost}  ( + ${config.pointsValue.almost} )   ` +
+        return `Legend:\ncorrect  =  ${config.emojis.correct}  ( +${config.pointsValue.correct} )   ` +
+               `almost  =  ${config.emojis.almost}  ( +${config.pointsValue.almost} )   ` +
                `incorrect  =  ${config.emojis.incorrect}  ( ${config.pointsValue.incorrect} )`;
     },
     answersTitle(gameIndexNumber) {
@@ -461,16 +486,16 @@ const messages = {
         const gameScore = objOrArr;    // single game’s stats  / per-game summary
         // conditional lines so the block doesn’t print empty bonus/penalty rows
         const bonusLine = (gameScore.unusedGuessPoints || 0) > 0
-            ? `\n        Bonus  Points:     ${gameScore.unusedGuessPoints}`
+            ? `\n            Bonus  Points:     ${gameScore.unusedGuessPoints}`
             : "";
         const penaltyLine = (gameScore.quitPenalty || 0) > 0
-            ? `\n        Quit  Penalty:     - ${gameScore.quitPenalty}`
+            ? `\n            Quit  Penalty:     - ${gameScore.quitPenalty}`
             : "";
 
         // compact 3-line summary  (keeps math visible after reveal)
         return `Score Summary:
-                Guess  Points:     ${gameScore.guessesPoints}${bonusLine}${penaltyLine}
-                Total  Points:       ${gameScore.totalPoints}`;
+            Guess  Points:     ${gameScore.guessesPoints}${bonusLine}${penaltyLine}
+            Total  Points:       ${gameScore.totalPoints}`;
     },
 };
 
@@ -498,13 +523,27 @@ const demoDictionary = [
     { word: "avoid", definition: "To keep away from." },
 ];
 
+
 // check type then non-empty  -->  only switch if real data exists (loaded correctly)
 // const externalDict  =  (typeof window !== "undefined") ? require('./dictionaryData') : null ;
 // browser-safe  -->  reads the array injected by dictionaryData.js
-const externalDict = (typeof window !== "undefined" && Array.isArray(window.dictionaryData)) ? window.dictionaryData : null;
-const activeDictionary = (externalDict && externalDict.length)
-    ? externalDict    // prefer external list when available  (portfolio mode)
-    : demoDictionary;    // fallback to local demo / dev version
+// const externalDict = (typeof window !== "undefined" && Array.isArray(window.dictionaryData)) ? window.dictionaryData : null;
+// const activeDictionary = (externalDict && externalDict.length)
+//     ? externalDict    // prefer external list when available  (portfolio mode)
+//     : demoDictionary;    // fallback to local demo / dev version
+
+
+// dictionary loader — uses global dictionaryData if present; otherwise the demo list
+let activeDictionary = demoDictionary;
+function resolveDictionary() {
+  try {
+    if (typeof window !== "undefined" && Array.isArray(window.dictionaryData) && window.dictionaryData.length) {
+      activeDictionary = window.dictionaryData;
+    }
+  } catch (_) { /* stay on demo */ }
+}
+// run once at load; if dictionaryData.js is deferred above, this will see it
+resolveDictionary();
 
 
 
@@ -601,6 +640,11 @@ function customConfig(inputLine) {
 async function validateGuess(inputLine, boardTextForRetry) {
     if (inputLine === null) return null;    // cancel/Esc  -->  pass to caller to confirm
 
+    // treat empty-string as a gentle re-prompt instead of an error
+    if (String(inputLine).trim().length === 0) {
+        return "";    // caller will handle and re-ask without flashing an error screen
+    }
+
     const cleanedGuess = inputLine.toLowerCase().replace(/[^a-z0-9]/g, "");    // format to lowercase (same as dictionary) + strip to letters/numbers
     const isRightLength = (cleanedGuess.length === config.wordLength);    // exact length check  -->  based on current config
     const isInDictionary = activeDictionary.some(entry => entry.word === cleanedGuess);    // enforce membership in game dictionary
@@ -681,6 +725,34 @@ function emojiGuessPoints(emojiArray) {
                 + counts.incorrect * config.pointsValue.incorrect;
     return { points, counts };    // both the number value and the visual breakdown (for messages.roundExplain)
 }
+
+
+
+/* 
+    compute totals for the current gameState (solo or per-player in multi)
+    includeBonus  -->  when true, adds remaining * wordLength * correctValue to player's score
+*/
+function computeUserScore(includeBonus) {
+    const perGuessPoints = gameState.attempts.map(([word, emojiRow]) => {    // extract per-guess points
+        return emojiRow.reduce((sum, grade) => {    // sum emojis to a row score
+            let emojiValue = 0;    // default
+            if (grade === config.emojis.correct) emojiValue = config.pointsValue.correct;    // green value
+            else if (grade === config.emojis.almost) emojiValue = config.pointsValue.almost;    // yellow value
+            else emojiValue = config.pointsValue.incorrect;    // white value
+            return sum + emojiValue;    // accumulate row total
+        }, 0);    // accumulate sum from 0
+    });
+
+    const guessesPoints = perGuessPoints.reduce((a, b) => a + b, 0);    // sum all rows (overall base score)
+
+    const unusedGuessPoints = includeBonus
+        ? gameState.remaining * config.wordLength * config.pointsValue.correct    // bonus locks when game round ends
+        : 0;    // mid-game display hides bonus  ( prevents confusion )
+
+    const totalPoints = guessesPoints + unusedGuessPoints;    // overall total ( base + bonus )
+    return { totalPoints, unusedGuessPoints, perGuessPoints, guessesPoints };    // full breakdown  -->  used by summaries
+}
+
 
 
 /* 
@@ -1012,7 +1084,12 @@ async function playGame() {
         const guessLine = await ask.prompt(messages.promptGuess(gameState.playerNames[0] || null, boardText));    // solo player may have picked a display name
         let cleanGuess = null;    // will hold validated guess
 
-        if (guessLine !== null) cleanGuess = await validateGuess(guessLine, boardText);    // recursion keeps the same board for invalid inputs
+        if (guessLine !== null) {
+            // silent re-ask on empty submit (prevents the “phantom length” dialog)
+            if (String(guessLine).trim().length === 0) { continue; }
+            cleanGuess = await validateGuess(guessLine, boardText);    // recursion keeps the same board for invalid inputs
+            if (cleanGuess === "") { continue; } // empty → retry without error
+        }
 
         if (guessLine === null || cleanGuess === null) {    // cancel ?  -->  confirm with user
             const continueYes = await ask.confirm(messages.endGame);    // gives a second chance
@@ -1207,11 +1284,27 @@ async function playGameMulti(previousSetupInfo) {
 
         /* ---------- closure  -->  1 full attempt for a specific player ---------- */
         async function takeTurnFor(playerState) {
-            const boardNow = displayGuess(playerState.attempts);    // board snapshot for current player
-            const guessLine = await ask.prompt(messages.promptGuess(playerState.name, boardNow)); // per-turn banner
-            let cleanGuess = null;
-
-            if (guessLine !== null) cleanGuess = await validateGuess(guessLine, boardNow); // keeps same board during retries
+            const boardNow = displayGuess(playerState.attempts); // snapshot for this player
+            const guessLine = await ask.prompt(
+                messages.promptGuess(playerState.name, boardNow)
+            );
+            // cancel path → confirm → maybe quit
+            if (guessLine === null) {
+                const continueYes = await ask.confirm(messages.endGame);
+                if (continueYes) return await takeTurnFor(playerState); // retry same turn
+                playerState.status = "quit";
+                playerState.remainingAtQuit = playerState.remaining;
+                playerState.remaining = 0;
+                return;
+            }
+            // silent retry on empty
+            if (String(guessLine).trim().length === 0) {
+                return await takeTurnFor(playerState);
+            }
+            let cleanGuess = await validateGuess(guessLine, boardNow);
+            if (cleanGuess === "") {
+                return await takeTurnFor(playerState); // empty → retry
+            }
 
             if (guessLine === null || cleanGuess === null) {    // cancel path → confirm → maybe quit
                 const continueYes = await ask.confirm(messages.endGame);
@@ -1527,13 +1620,36 @@ async function playGameMulti(previousSetupInfo) {
 
 // ----- button controls on the page (only used when present) -----
 function wireControls() {
-  const btnStart   = document.getElementById("btn-start");
-  const btnRules   = document.getElementById("btn-rules");
-  const btnRestart = document.getElementById("btn-restart");
+    const btnStart   = document.getElementById("btn-start");
+    const btnRules   = document.getElementById("btn-rules");
 
-  if (btnStart)   btnStart.addEventListener("click", async () => { btnRestart.hidden = false; await intro(); });
-  if (btnRules)   btnRules.addEventListener("click", async () => { await ask.alert(messages.rulesInfo()); });
-  if (btnRestart) btnRestart.addEventListener("click", () => window.location.reload());
+    // dedicated Rules overlay DOM
+    const rulesOverlay = document.getElementById("ui-rules");
+    const rulesMsg     = document.getElementById("ui-rules-msg");
+    const rulesOk      = document.getElementById("ui-rules-ok");
+
+    // start always begins a fresh run  ;  dictionary is resolved first
+    if (btnStart) btnStart.addEventListener("click", async () => {
+        resolveDictionary();
+        await intro();
+    });
+
+    // non-destructive rules  -->  shows above the ask.* modal and never touches its resolver
+    function openRules() {
+        if (!rulesOverlay || !rulesMsg || !rulesOk) return;
+        rulesMsg.textContent = messages.rulesInfo();
+        rulesOverlay.hidden = false;
+        rulesOk.focus();
+    }
+    function closeRules() {
+        if (!rulesOverlay) return;
+        rulesOverlay.hidden = true;
+    }
+    if (rulesOk) rulesOk.addEventListener("click", closeRules);
+    if (btnRules) btnRules.addEventListener("click", () => {
+        // if a game dialog is open, just layer rules on top ; otherwise show the same overlay
+        openRules();
+    });
 }
 
 
@@ -1544,9 +1660,9 @@ function wireControls() {
     ========================================================= */
 
 if (ENV.isEmbed) {
-  // in iframe  -->  don’t auto-run, show the start screen and buttons
-  wireControls();
+    // in iframe  -->  don’t auto-run, show the start screen and buttons
+    wireControls();
 } else {
-  // full page  -->  behave like the classic version (auto-runs)
-  intro();    // starts the game flow at the welcome → menu  -->  then follows the router paths
+    // full page  -->  behave like the classic version (auto-runs)
+    intro();    // starts the game flow at the welcome  -->  menu  -->  then follows the router paths
 }

@@ -31,6 +31,7 @@
       (function () {
         var KEY = "mx-theme";
         var html = document.documentElement;
+        var meta = document.getElementById('meta-theme-color');
         function safeParentTheme() {
           try {
             if (window.parent && window.parent !== window) {
@@ -54,7 +55,34 @@
         html.setAttribute("data-theme", t);
         // native form controls + UA colors
         html.style.colorScheme = t;
+        if (meta) {
+          // mirror the CSS token used for cards/surfaces
+          var cs = getComputedStyle(html);
+          var bg = cs.getPropertyValue('--surface').trim() || (t === 'dark' ? '#0f172a' : '#f9fafb');
+          meta.setAttribute('content', bg);
+        }
       })();
+
+      // allow a parent page to set the theme even if cross-origin
+      // parent can post  -->  iframe.contentWindow.postMessage({ type: 'woorddle:set-theme', theme: 'dark' }, '*')
+      (function () {
+        function apply(t) {
+          var html = document.documentElement;
+          var theme = (t === 'dark') ? 'dark' : 'light';
+          html.setAttribute('data-theme', theme);
+          html.style.colorScheme = theme;
+          var meta = document.getElementById('meta-theme-color');
+          if (meta) {
+            var cs = getComputedStyle(html);
+            meta.setAttribute('content', (cs.getPropertyValue('--surface').trim() || (theme === 'dark' ? '#0f172a' : '#f9fafb')));
+          }
+        }
+        window.addEventListener('message', function (e) {
+          if (!e || !e.data) return;
+          if (e.data.type === 'woorddle:set-theme') apply(e.data.theme);
+        });
+      })();
+
     </script>
 
     <!-- let the browser know we support both but still set the choice manually -->
@@ -81,11 +109,11 @@
         <!-- buttons wired by game.js / wireControls() -->
         <button id="btn-start" class="btn btn-primary">Start</button>
         <button id="btn-rules" class="btn btn-ghost">Rules</button>
-        <button id="btn-restart" class="btn btn-danger" hidden>Restart</button>
       </div>
     </header>
 
-    <p>  🐉  Reload the page to run the game again !  🐉</p> 
+    <!-- (no reload hint needed; Start always begins a new game) -->
+    <!-- <p>  🐉  Reload the page to run the game again !  🐉</p>  -->
 
     <!-- optional console area used by game.js log() helper -->
     <pre id="log" hidden class="log"></pre>
@@ -125,6 +153,18 @@
         </form>
       </div>
     </div>
+
+    <!-- dedicated rules overlay (non-destructive ; doesn't touch the ask.* resolver) -->
+    <div id="ui-rules" class="modal" hidden>
+      <div role="dialog" aria-modal="true" class="modal-card">
+        <h2 class="modal-title">Rules</h2>
+        <div id="ui-rules-msg" class="modal-message"></div>
+        <div class="modal-actions">
+          <button type="button" id="ui-rules-ok" class="btn btn-primary">OK</button>
+        </div>
+      </div>
+    </div>
+
 
     <!--  =========================================================
             THEME  SYNC  —  keep the game matched to my portfolio
@@ -209,6 +249,10 @@
     <footer class="site-foot" role="contentinfo">
       <p>©  <br />  🐉  Leafy Sea Dragons  🐉</p>
     </footer>
+
+    <!-- full dictionary (defines window.dictionaryData) -->
+    <!-- place BEFORE game.js so the array is available immediately -->
+    <script defer src="./dictionaryData.js"></script>
 
     <!-- game code -->
     <script defer src="./game.js"></script>

@@ -101,8 +101,8 @@ body {
     gap: 1rem;
     align-items: center;
     padding: 1rem clamp(1rem, 3vw, 2rem);
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
+    border-bottom: 1px solid var(--border);    /* use the app card bg so it blends with the site in dark mode */
+    background: var(--surface);
     position: sticky;
     top: 0;
     z-index: 2;
@@ -304,4 +304,9 @@ body {
     color: var(--muted);
     overflow: auto;
     max-height: 45vh;
+}
+
+/* rules overlay sits above the game modal so it never steals/overwrites the ask state */
+#ui-rules.modal {
+    z-index: 60;
 }
