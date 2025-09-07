@@ -2722,4 +2722,13 @@ const dictionary = [
 
 ];
 
-module.exports = dictionary;
+
+
+if (typeof window !== "undefined") {
+  // Browser path used by game.js
+  window.dictionaryData = dictionary;
+}
+if (typeof module !== "undefined" && module.exports) {
+  // Still allow require(...) in Node/tooling
+  module.exports = dictionary;
+}

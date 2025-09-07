@@ -41,17 +41,36 @@
     pulls named parameter from  window.location.search  and returns string or null
 */
 function getQueryParam(name) {
-  const params = new URLSearchParams(window.location.search);    // tiny API for query parsing
-  return params.get(name);    // null if missing
+    const params = new URLSearchParams(window.location.search);    // tiny API for query parsing
+    return params.get(name);    // null if missing
 }
+function isMobileLike() {    // detect mobile/tablet screens
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const touch  = (navigator.maxTouchPoints || 0) > 0;
+    const narrow = Math.min(window.innerWidth, window.innerHeight) <= 820;    // phones & most tablets
+    return Boolean(coarse || touch || narrow);
+}
+
 
 /* ---------------- environment switch (single flag) ----------------
     isEmbed  -->  true when  ?ui=embed  so we render dialogs inside this iframe
+    also used for mobile/tablets
 */
 const ENV = {
-    // embed if ?ui=embed  OR  if the game's inside an iframe
-    isEmbed: (getQueryParam("ui") === "embed") || (window.self !== window.top),    // boolean switch used by the dialog layer + startup behavior
+  // existing embed behaviour
+  isEmbed: (getQueryParam("ui") === "embed") || (window.self !== window.top),
+
+  // manual overrides
+  forceInline: ["inline", "modal", "embed"].includes((getQueryParam("ui") || "").toLowerCase()),
+  forceNative: (getQueryParam("ui") || "").toLowerCase() === "native",
 };
+
+// Use modal/in-page dialogs if:
+//   • embedded
+//   • user forces inline via ?ui=inline|modal|embed
+//   • OR (default) device looks mobile/tablet, unless ?ui=native
+const USE_INLINE_UI = ENV.forceInline || (!ENV.forceNative && (ENV.isEmbed || isMobileLike()));
+
 
 /* ---------------- DOM shortcuts ---------------- */
 const $ = (sel) => document.querySelector(sel);    // 1 selector, used sparingly below
@@ -69,7 +88,7 @@ function log(line) {    // helper for demo / debugging
 */
 const ask = (() => {
     /* ---------- non-embed fallback  -->  original blocking dialogs (same behavior) ---------- */
-    if (!ENV.isEmbed) {
+    if (!USE_INLINE_UI) {
         return {
             alert: async (msg) => { window.alert(msg); },    // same signature as our async version
             confirm: async (msg) => { return window.confirm(msg); },    // resolves to boolean
@@ -291,8 +310,13 @@ const messages = {
         explains emojis meaning + scoring using live config  -->  stretch goal where custom icons/points system propagates everywhere
     */
     rulesInfo() {
+        const countForLen = Array.isArray(activeDictionary)
+            ? activeDictionary.filter(e => (e && e.word && e.word.length === config.wordLength)).length
+            : 0;
+        
         return (
             `Each player has  ${config.maxGuesses}  tries to guess the hidden  ${config.wordLength}-letter word.  ` +
+            `There are  ${countForLen}  words of this length in the current game dictionary.  \n` +
             `After each guess, the emojis below show how accurate the guess letters are:\n\n` +
             `       ${config.emojis.correct}  ( +${config.pointsValue.correct} )   -->    right letter in the right spot\n` +
             `       ${config.emojis.almost}  ( +${config.pointsValue.almost} )    -->    right letter in the wrong spot\n` +
@@ -495,7 +519,7 @@ const messages = {
         // compact 3-line summary  (keeps math visible after reveal)
         return `Score Summary:
             Guess  Points:     ${gameScore.guessesPoints}${bonusLine}${penaltyLine}
-            Total  Points:       ${gameScore.totalPoints}`;
+            Total  Points:        ${gameScore.totalPoints}`;
     },
 };
 
@@ -527,23 +551,12 @@ const demoDictionary = [
 // check type then non-empty  -->  only switch if real data exists (loaded correctly)
 // const externalDict  =  (typeof window !== "undefined") ? require('./dictionaryData') : null ;
 // browser-safe  -->  reads the array injected by dictionaryData.js
-// const externalDict = (typeof window !== "undefined" && Array.isArray(window.dictionaryData)) ? window.dictionaryData : null;
-// const activeDictionary = (externalDict && externalDict.length)
-//     ? externalDict    // prefer external list when available  (portfolio mode)
-//     : demoDictionary;    // fallback to local demo / dev version
+const externalDict = (typeof window !== "undefined" && Array.isArray(window.dictionaryData)) ? window.dictionaryData : null;
+const activeDictionary = (externalDict && externalDict.length)
+    ? externalDict    // prefer external list when available  (portfolio mode)
+    : demoDictionary;    // fallback to local demo / dev version
 
-
-// dictionary loader — uses global dictionaryData if present; otherwise the demo list
-let activeDictionary = demoDictionary;
-function resolveDictionary() {
-    try {
-        if (typeof window !== "undefined" && Array.isArray(window.dictionaryData) && window.dictionaryData.length) {
-          activeDictionary = window.dictionaryData;
-        }
-    } catch (_) { /* stay on demo */ }
-}
-// run once at load  -->  if dictionaryData.js is deferred above, this will see it
-resolveDictionary();
+log(`Active dictionary size:  ${activeDictionary.length}`);
 
 
 
@@ -1630,7 +1643,6 @@ function wireControls() {
 
     // start always begins a fresh run  ;  dictionary is resolved first
     if (btnStart) btnStart.addEventListener("click", async () => {
-        resolveDictionary();
         await intro();
     });
 
@@ -1659,8 +1671,8 @@ function wireControls() {
         BOOT UP  -->  actual entry point
     ========================================================= */
 
-if (ENV.isEmbed) {
-    // in iframe  -->  don’t auto-run, show the start screen and buttons
+if (USE_INLINE_UI) {
+    // mobile / tablet / embedded (iframe)  -->  don’t auto-run, show the start screen and buttons
     wireControls();
 } else {
     // full page  -->  behave like the classic version (auto-runs)

@@ -252,7 +252,10 @@
 
     <!-- full dictionary (defines window.dictionaryData) -->
     <!-- place BEFORE game.js so the array is available immediately -->
-    <script defer src="./dictionaryData.js"></script>
+    <script defer src="./dictionaryData.js"
+      onload="console.log('dictionaryData.js loaded')"
+      onerror="console.error('dictionaryData.js failed to load')"
+    ></script>
 
     <!-- game code -->
     <script defer src="./game.js"></script>
